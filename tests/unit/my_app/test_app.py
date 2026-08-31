@@ -1,4 +1,4 @@
-from my_app.app import example_fn
+from cactus_juice.app import example_fn
 
 
 def test_example_fn():
