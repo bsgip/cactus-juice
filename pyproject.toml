@@ -31,9 +31,11 @@ description = "CSIP-Aus to OCPP demonstration"
 requires-python = ">=3.13"
 dynamic = ["version"]
 dependencies = [
+    "pymodbus[serial]",
     "fastapi",
     "sqlalchemy",
     "asyncpg",
+    
 ]
 
 [project.optional-dependencies]
