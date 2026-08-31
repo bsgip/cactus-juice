@@ -1,0 +1,41 @@
+
+[tool.pytest.ini_options]
+pythonpath = ["src/"]
+testpaths = "tests"
+
+[tool.bandit]
+exclude_dirs = ["tests"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "S", "C90", "B", "UP", "ANN", "N"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "ANN", "N"]
+
+[tool.ty.src]
+include = ["src", "tests"]
+
+[build-system]
+requires = ["setuptools >= 40.9.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "my_app"
+version = "0.0.1"
+description = "An example BSGIP app"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["bandit", "ty", "ruff", "codespell", "coverage", "pytest-cov"]
+docs = ["sphinx", "sphinx-click", "sphinx-markdown-builder"]
+test = ["pytest", "pytest-xdist"]
+
+[tool.setuptools.package-data]
+"my_app" = ["py.typed"]

@@ -1,0 +1,31 @@
+{
+    // For UV
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+    
+    // Bandit settings
+    "python.linting.banditEnabled": true,
+    "python.linting.banditArgs": [
+        // https://github.com/PyCQA/bandit/issues/603
+        "--configfile=${workspaceFolder}/bandit.yml"
+    ],
+    // formatting (black and isort)
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "[python]": {
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": true
+        }
+    },
+    // Show ruler at end of line
+    "editor.rulers": [
+        120
+    ],
+    // Hide python cache files in the explorer side bar
+    "files.exclude": {
+        "**/*.pyc": {
+            "when": "$(basename).py"
+        },
+        "**/__pycache__": true,
+        "**/.pytest_cache": true
+    }
+}
