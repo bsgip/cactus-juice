@@ -33,14 +33,14 @@ dynamic = ["version"]
 dependencies = [
     "pymodbus[serial]",
     "fastapi",
+    "pydantic-settings",
     "sqlalchemy",
     "asyncpg",
-    
 ]
 
 [project.optional-dependencies]
-dev = ["bandit", "ty", "ruff", "codespell", "coverage", "pytest-cov"]
-test = ["pytest", "pytest-xdist"]
+dev = ["alembic", "bandit", "ty", "ruff", "codespell", "coverage", "pytest-cov", "python-dotenv[cli]"]
+test = ["alembic", "pytest", "pytest-xdist"]
 
 [tool.setuptools.package-data]
 "cactus_juice" = ["py.typed"]

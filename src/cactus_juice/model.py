@@ -1,6 +1,17 @@
 from datetime import datetime
 
-from sqlalchemy import INTEGER, Boolean, Computed, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, func
+from sqlalchemy import (
+    INTEGER,
+    Boolean,
+    Computed,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import TSTZRANGE
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -74,7 +85,7 @@ class CSIPAusDefault(Base):
     )
 
     # These are the various default options we want to track
-    set_grad_w: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    set_grad_watts: Mapped[int | None] = mapped_column(Integer, nullable=True)
     connect: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     energize: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     import_limit_watts: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -110,6 +121,7 @@ class CSIPAusControl(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # These are the actual control values that may/may not be set
+    ramp_time_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     connect: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     energize: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     import_limit_watts: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -133,11 +145,19 @@ class CSIPAusControlResponse(Base):
 
     response_status: Mapped[int] = mapped_column(INTEGER)
     end_device_mrid: Mapped[str] = mapped_column(String)
-    attempt: Mapped[int] = mapped_column(INTEGER)
     not_before: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), index=True
-    )  # Don't send this response before this time
+    )  # Don't send this response before this time - allows "enqueing" otherwise just set it to now
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     control: Mapped["CSIPAusControl"] = relationship(lazy="raise", back_populates="responses")
+
+    __table_args__ = (
+        Index(
+            "idx_unsent_responses",
+            "not_before",
+            postgresql_where=text("sent_at IS NULL"),
+        ),
+    )

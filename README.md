@@ -2,9 +2,17 @@
 
 Demonstration project showing how to link a CSIP-Aus utility server to OCPP for the purposes of compliance testing. This is NOT a true CSIP-Aus/OCPP client - it exists to showcase how the two can be linked.
 
+## Environment Variables
+
+| Environment Variable | Default Value | Description |
+|----------------------|----------------|-------------|
+| `JUICE_DATABASE_URL` | – | SQLAlchemy-style database connection string using `postgresql+asyncpg` scheme. |
+
+For development - we recommend the use of a local `.env` file - subsequent commands will assume the existence of this file.
+
 ## Getting Started
 
-### Install
+### Install Dependencies
 ```
 # For dev
 uv sync --python 3.13 --all-extras
@@ -20,19 +28,27 @@ uv run ruff format --check .
 uv run ty check
 uv run bandit -c pyproject.toml -r src/
 ```
+### Database
 
-## Standard Python Tools
+Requires a postgres 16+ database
 
-These are the standard python tools that should be used on any new Python projects.
+**Create DB**
+```
+echo 'export JUICE_DATABASE_URL="postgresql+asyncpg://cactusjuiceuser:mypass@localhost:5432/cactusjuice' > .env
+sudo -u postgres psql
+postgres=# create database cactusjuice;
+postgres=# create user cactusjuiceuser with encrypted password 'mypass';
+postgres=# grant all privileges on database cactusjuice to cactusjuiceuser;
+postgres=# alter database cactusjuice owner to cactusjuiceuser;
+```
 
-| Name | Configuration file | Purpose | URL |
-| --- | --- | --- | --- |
-| bandit | pyproject.toml | Checks your code for security issues | https://github.com/PyCQA/bandit |
-| ruff | pyproject.toml | Formatter / Linter | https://github.com/astral-sh/ruff |
-| ty | pyproject.toml | Typechecker | https://github.com/astral-sh/ty |
-| codespell | - | Spellchecker | https://pypi.org/project/codespell/ |
-| coverage | - |  Test coverage metric | https://coverage.readthedocs.io/en |
-| pytest | pytest.ini | Testing framework | https://docs.pytest.org/ |
+**Apply Migrations**
+```
+uv run dotenv run alembic upgrade head
+```
 
-Some tools have a configuration settings. The table above indicates in which configuration file to look for settings for that tool.
+**Create new migration**
+```
+uv run dotenv run alembic revision --autogenerate -m "new_migration"
+```
 
