@@ -27,7 +27,12 @@ target_metadata = Base.metadata
 # can be acquired:
 # my_important_option = config.get_main_option("my_important_option")
 # ... etc.
-config.set_main_option("sqlalchemy.url", str(CactusJuiceSettings().juice_database_url))
+# Honour a sqlalchemy.url explicitly supplied by the caller (e.g. tests running the migration
+# chain against a throwaway DB); only fall back to app settings when it's still the ini placeholder.
+_configured_url = config.get_main_option("sqlalchemy.url")
+if not _configured_url or _configured_url == "driver://user:pass@localhost/dbname":
+    _configured_url = str(CactusJuiceSettings().juice_database_url)
+config.set_main_option("sqlalchemy.url", _configured_url)
 
 
 def run_migrations_offline() -> None:

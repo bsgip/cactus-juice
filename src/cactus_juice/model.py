@@ -110,7 +110,11 @@ class CSIPAusControl(Base):
     finished_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         Computed(
-            "started_at + (duration_seconds * interval '1 second')",
+            # `timestamptz + interval` and bare `extract(epoch from timestamptz)` are only
+            # STABLE (they depend on the session TimeZone), so Postgres rejects them in a
+            # generated column. Pinning the zone with `AT TIME ZONE 'UTC'` on both sides
+            # makes every step IMMUTABLE while preserving the instant.
+            "(started_at AT TIME ZONE 'UTC' + duration_seconds * interval '1 second') AT TIME ZONE 'UTC'",
             persisted=True,
         ),
         index=True,

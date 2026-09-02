@@ -15,14 +15,14 @@ async def fetch_controls_active_from(
 
     This is designed to be used with an epoch close to "now"
 
-    Returns them ordered by start_time ASC."""
+    Returns them ordered by start_time ASC, id ASC."""
 
     stmt = (
         select(CSIPAusControl)
         .where(CSIPAusControl.finished_at > epoch)  # This clause will do the heavy lifting for filtering results
         .where(or_(CSIPAusControl.superseded_at.is_(None), CSIPAusControl.superseded_at > epoch))
         .where(or_(CSIPAusControl.cancelled_at.is_(None), CSIPAusControl.cancelled_at > epoch))
-        .order_by(CSIPAusControl.started_at.asc())
+        .order_by(CSIPAusControl.started_at.asc(), CSIPAusControl.csipaus_control_id.asc())
         .offset(start)
         .limit(limit)
     )
