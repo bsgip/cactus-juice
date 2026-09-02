@@ -8,7 +8,12 @@ from assertical.fake.generator import clone_class_instance, generate_class_insta
 from assertical.fixtures.postgres import generate_async_session
 from sqlalchemy import func, select
 
-from cactus_juice.crud import fetch_controls_active_from, fetch_unsent_control_responses, upsert_controls
+from cactus_juice.crud import (
+    fetch_controls_active_from,
+    fetch_unsent_control_responses,
+    upsert_control_responses,
+    upsert_controls,
+)
 from cactus_juice.model import CSIPAusControl, CSIPAusControlResponse
 
 DEFAULT_CREATED_TIME = datetime(2000, 1, 1, tzinfo=UTC)
@@ -62,6 +67,14 @@ async def test_upsert_controls_no_commit(pg_base_config):
         assert (count_before + 1) == (
             await session.execute(select(func.count()).select_from(CSIPAusControl))
         ).scalar_one()
+
+
+async def test_upsert_controls_empty(pg_base_config):
+    async with generate_async_session(pg_base_config) as session:
+        count_before = (await session.execute(select(func.count()).select_from(CSIPAusControl))).scalar_one()
+        await upsert_controls(session, [])
+        assert count_before == (await session.execute(select(func.count()).select_from(CSIPAusControl))).scalar_one()
+        await session.commit()
 
 
 async def test_upsert_controls(pg_base_config):
@@ -177,6 +190,184 @@ async def test_upsert_controls(pg_base_config):
     assert noop_row.primacy == 1
     assert noop_row.import_limit_watts == 201, "Unchanged"
     assert noop_row.export_limit_watts == 202, "Unchanged"
+
+
+async def test_upsert_control_responses_empty(pg_base_config):
+    async with generate_async_session(pg_base_config) as session:
+        count_before = (await session.execute(select(func.count()).select_from(CSIPAusControlResponse))).scalar_one()
+        await upsert_control_responses(session, [])
+        assert (
+            count_before
+            == (await session.execute(select(func.count()).select_from(CSIPAusControlResponse))).scalar_one()
+        )
+        await session.commit()
+
+
+async def test_upsert_control_responses_no_commit(pg_base_config):
+    """upsert_control_responses must never commit/rollback on its own - the caller owns the transaction."""
+
+    async with generate_async_session(pg_base_config) as session:
+        count_before = (await session.execute(select(func.count()).select_from(CSIPAusControlResponse))).scalar_one()
+
+    # No explicit commit/rollback
+    async with generate_async_session(pg_base_config) as session:
+        await upsert_control_responses(
+            session,
+            [
+                generate_class_instance(
+                    CSIPAusControlResponse,
+                    seed=101,
+                    csipaus_control_id=2,
+                    end_device_mrid="brand-new-device",
+                    sent_at=None,
+                )
+            ],
+        )
+
+    async with generate_async_session(pg_base_config) as session:
+        assert (
+            count_before
+            == (await session.execute(select(func.count()).select_from(CSIPAusControlResponse))).scalar_one()
+        )
+
+    # Explicit rollback
+    async with generate_async_session(pg_base_config) as session:
+        await upsert_control_responses(
+            session,
+            [
+                generate_class_instance(
+                    CSIPAusControlResponse,
+                    seed=101,
+                    csipaus_control_id=2,
+                    end_device_mrid="brand-new-device",
+                    sent_at=None,
+                )
+            ],
+        )
+        await session.rollback()
+
+    async with generate_async_session(pg_base_config) as session:
+        assert (
+            count_before
+            == (await session.execute(select(func.count()).select_from(CSIPAusControlResponse))).scalar_one()
+        )
+
+    # Will stick on commit
+    async with generate_async_session(pg_base_config) as session:
+        await upsert_control_responses(
+            session,
+            [
+                generate_class_instance(
+                    CSIPAusControlResponse,
+                    seed=101,
+                    csipaus_control_id=2,
+                    end_device_mrid="brand-new-device",
+                    sent_at=None,
+                )
+            ],
+        )
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        assert (count_before + 1) == (
+            await session.execute(select(func.count()).select_from(CSIPAusControlResponse))
+        ).scalar_one()
+
+
+@pytest.mark.parametrize("optional_is_none", [True, False])
+async def test_upsert_control_responses(pg_base_config, optional_is_none: bool):
+    """Ensures upsert_control_response can insert, update (sent_at) and not update (sent_at already set)"""
+
+    # Arrange
+    async with generate_async_session(pg_base_config) as session:
+        count_before = (await session.execute(select(func.count()).select_from(CSIPAusControlResponse))).scalar_one()
+
+    new_response_1 = generate_class_instance(
+        CSIPAusControlResponse,
+        seed=101,
+        csipaus_control_id=1,
+        end_device_mrid="aaa",
+        optional_is_none=not optional_is_none,
+    )
+    new_response_2 = generate_class_instance(
+        CSIPAusControlResponse,
+        seed=202,
+        optional_is_none=optional_is_none,
+        csipaus_control_id=1,
+        end_device_mrid="aaa",
+    )
+
+    # existing row is unsent -> not_before takes the new value, everything else is left alone
+    # Conflicts with #2
+    conflict_2 = generate_class_instance(
+        CSIPAusControlResponse,
+        seed=303,
+        optional_is_none=optional_is_none,
+        csipaus_control_id=1,
+        response_status=2,
+        end_device_mrid="aaa",
+    )
+
+    # existing row has already been sent -> the whole row must be left untouched
+    # Conflicts with #5
+    conflict_5 = generate_class_instance(
+        CSIPAusControlResponse,
+        seed=404,
+        optional_is_none=optional_is_none,
+        csipaus_control_id=3,
+        response_status=1,
+        end_device_mrid="ccc",
+    )
+
+    # Act - insert clones so the originals stay detached from the session
+    async with generate_async_session(pg_base_config) as session:
+        await upsert_control_responses(
+            session, [clone_class_instance(e) for e in [new_response_1, new_response_2, conflict_2, conflict_5]]
+        )
+        await session.commit()
+
+    # Assert
+    async with generate_async_session(pg_base_config) as session:
+        rows = (await session.execute(select(CSIPAusControlResponse))).scalars().all()
+
+    assert len(rows) == count_before + 2
+    by_key = {(r.csipaus_control_id, r.end_device_mrid, r.response_status): r for r in rows}
+
+    # brand new tuple inserted verbatim
+    inserted_1 = by_key[
+        (new_response_1.csipaus_control_id, new_response_1.end_device_mrid, new_response_1.response_status)
+    ]
+    assert_class_instance_equality(
+        CSIPAusControlResponse,
+        new_response_1,
+        inserted_1,
+        ignored_properties={"csipaus_control_response_id", "created_at"},
+    )
+    assert_nowish(inserted_1.created_at)
+    inserted_2 = by_key[
+        (new_response_2.csipaus_control_id, new_response_2.end_device_mrid, new_response_2.response_status)
+    ]
+    assert_class_instance_equality(
+        CSIPAusControlResponse,
+        new_response_2,
+        inserted_2,
+        ignored_properties={"csipaus_control_response_id", "created_at"},
+    )
+    assert_nowish(inserted_1.created_at)
+
+    # unsent conflict: not_before moved, every other column untouched
+    unsent_row = by_key[(conflict_2.csipaus_control_id, conflict_2.end_device_mrid, conflict_2.response_status)]
+    assert unsent_row.csipaus_control_response_id == 2
+    assert unsent_row.sent_at == conflict_2.sent_at, "This is updated"
+    assert unsent_row.created_at == DEFAULT_CREATED_TIME, "Unchanged"
+    assert unsent_row.not_before == datetime(2026, 1, 1, tzinfo=UTC), "Unchanged from base_config.sql"
+
+    # sent conflict: nothing changed at all
+    sent_row = by_key[(conflict_5.csipaus_control_id, conflict_5.end_device_mrid, conflict_5.response_status)]
+    assert sent_row.csipaus_control_response_id == 5
+    assert sent_row.sent_at == datetime(2025, 1, 1, tzinfo=UTC), "Unchanged from base_config.sql"
+    assert sent_row.created_at == DEFAULT_CREATED_TIME, "Unchanged"
+    assert sent_row.not_before == datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC), "Unchanged from base_config.sql"
 
 
 @pytest.mark.parametrize(

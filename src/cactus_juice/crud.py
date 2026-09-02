@@ -81,6 +81,41 @@ async def upsert_controls(session: AsyncSession, controls: list[CSIPAusControl])
     await session.execute(stmt)
 
 
+async def upsert_control_responses(session: AsyncSession, responses: list[CSIPAusControlResponse]) -> None:
+    """Inserts the specified set of control responses - if there is a conflict on the
+    (csipaus_control_id, end_device_mrid, response_status) unique constraint, the existing record is updated
+    following these rules:
+        1) ONLY the existing sent_at value can be updated
+        2) sent_at will ONLY update if the existing row's sent_at is currently NULL
+
+    does NOT commit any transaction."""
+    if not responses:
+        return
+
+    # Excludes PK and computed/default cols
+    insert_columns = (
+        "csipaus_control_id",
+        "response_status",
+        "end_device_mrid",
+        "not_before",
+        "sent_at",
+    )
+
+    values = [{col: getattr(r, col) for col in insert_columns} for r in responses]
+
+    # bulk INSERT ... ON CONFLICT (...) DO UPDATE.
+    insert_stmt = pg_insert(CSIPAusControlResponse).values(values)
+    excluded = insert_stmt.excluded
+
+    stmt = insert_stmt.on_conflict_do_update(
+        index_elements=["csipaus_control_id", "end_device_mrid", "response_status"],
+        set_={"sent_at": excluded.sent_at},
+        where=CSIPAusControlResponse.sent_at.is_(None),  # ONLY touch responses that haven't been sent yet
+    )
+
+    await session.execute(stmt)
+
+
 async def fetch_unsent_control_responses(
     session: AsyncSession, now: datetime, start: int = 0, limit: int = 500
 ) -> Sequence[CSIPAusControlResponse]:

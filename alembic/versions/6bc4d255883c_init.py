@@ -1,8 +1,8 @@
 """init
 
-Revision ID: 8d585e5d3b86
+Revision ID: 6bc4d255883c
 Revises:
-Create Date: 2026-09-02 10:42:58.008176
+Create Date: 2026-09-02 15:41:26.072010
 
 """
 
@@ -14,7 +14,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "8d585e5d3b86"
+revision: str = "6bc4d255883c"
 down_revision: str | Sequence[str] | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -100,6 +100,12 @@ def upgrade() -> None:
             ["csipaus_control.id"],
         ),
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint(
+            "csipaus_control_id",
+            "end_device_mrid",
+            "response_status",
+            name="uc_csipaus_control_response_control_device_status",
+        ),
     )
     op.create_index(
         "idx_unsent_responses",

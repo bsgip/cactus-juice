@@ -47,7 +47,7 @@ VALUES (1, 3, 'aaa', '2026-01-01T00:05:00Z', NULL, '2000-01-01T00:00:00Z');
 INSERT INTO csipaus_control_response (csipaus_control_id, response_status, end_device_mrid, not_before, sent_at, created_at)
 VALUES (2, 1, 'bbb', '2026-01-01T00:05:00Z', NULL, '2000-01-01T00:00:00Z');
 INSERT INTO csipaus_control_response (csipaus_control_id, response_status, end_device_mrid, not_before, sent_at, created_at)
-VALUES (3, 1, 'ccc', '2026-01-01T00:10:00Z', '2000-01-01T00:00:00Z', '2000-01-01T00:00:00Z');
+VALUES (3, 1, 'ccc', '2026-01-01T00:10:00Z', '2025-01-01T00:00:00Z', '2000-01-01T00:00:00Z');
 INSERT INTO csipaus_control_response (csipaus_control_id, response_status, end_device_mrid, not_before, sent_at, created_at)
 VALUES (3, 99, 'ccc', '2026-01-01T00:10:00Z', NULL, '2000-01-01T00:00:00Z');
 

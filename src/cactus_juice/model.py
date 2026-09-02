@@ -9,6 +9,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    UniqueConstraint,
     func,
     text,
 )
@@ -163,5 +164,11 @@ class CSIPAusControlResponse(Base):
             "idx_unsent_responses",
             "not_before",
             postgresql_where=text("sent_at IS NULL"),
+        ),
+        UniqueConstraint(
+            "csipaus_control_id",
+            "end_device_mrid",
+            "response_status",
+            name="uc_csipaus_control_response_control_device_status",
         ),
     )
