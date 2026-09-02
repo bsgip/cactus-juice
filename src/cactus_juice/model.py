@@ -79,7 +79,7 @@ class CSIPAusDefault(Base):
         ),
     )
 
-    csipaus_control_id: Mapped[int] = mapped_column(name="id", primary_key=True, autoincrement=True)
+    csipaus_default_id: Mapped[int] = mapped_column(name="id", primary_key=True, autoincrement=True)
 
     active_from: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # When was this set of defaults active from?
     active_to: Mapped[datetime] = mapped_column(

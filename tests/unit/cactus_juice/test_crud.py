@@ -13,6 +13,7 @@ from cactus_juice.crud import (
     DEFAULT_MAX_DATE,
     fetch_active_default,
     fetch_controls_active_from,
+    fetch_defaults_from,
     fetch_unsent_control_responses,
     update_active_default,
     upsert_control_responses,
@@ -434,7 +435,29 @@ async def test_fetch_active_default(pg_base_config, now: datetime, expected_id: 
         assert actual is None
     else:
         assert isinstance(actual, CSIPAusDefault)
-        assert actual.csipaus_control_id == expected_id
+        assert actual.csipaus_default_id == expected_id
+
+
+@pytest.mark.parametrize(
+    "now, start, limit, expected_ids",
+    [
+        (datetime.min, 0, 99, [1, 2, 3]),
+        (datetime(2025, 6, 1, tzinfo=UTC), 0, 99, [1, 2, 3]),  # before the first record
+        (datetime(2025, 6, 1, tzinfo=UTC), 1, 1, [2]),
+        (datetime(2025, 6, 1, tzinfo=UTC), 0, 2, [1, 2]),
+        (datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC), 0, 99, [1, 2, 3]),  # active_from is inclusive
+        (datetime(2026, 1, 1, 0, 2, 0, tzinfo=UTC), 0, 99, [1, 2, 3]),
+        (datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC), 0, 99, [2, 3]),
+        (datetime(2026, 1, 1, 0, 7, 0, tzinfo=UTC), 0, 99, [2, 3]),
+        (datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC), 0, 99, [3]),
+        (datetime(3000, 1, 1, 0, 15, 0, tzinfo=UTC), 0, 99, [3]),
+    ],
+)
+async def test_fetch_defaults_from(pg_base_config, now: datetime, start: int, limit: int, expected_ids: list[int]):
+    async with generate_async_session(pg_base_config) as session:
+        actual = await fetch_defaults_from(session, now=now, start=start, limit=limit)
+        assert [e.csipaus_default_id for e in actual] == expected_ids
+        assert_list_type(CSIPAusDefault, actual, count=len(expected_ids))
 
 
 @pytest.mark.parametrize("optional_is_none", [True, False])
@@ -449,7 +472,7 @@ async def test_update_active_default_empty(pg_empty_config, optional_is_none: bo
 
     async with generate_async_session(pg_empty_config) as session:
         rows = (
-            (await session.execute(select(CSIPAusDefault).order_by(CSIPAusDefault.csipaus_control_id))).scalars().all()
+            (await session.execute(select(CSIPAusDefault).order_by(CSIPAusDefault.csipaus_default_id))).scalars().all()
         )
         assert len(rows) == 1
         entry = rows[0]
@@ -471,12 +494,12 @@ async def test_update_active_default(pg_base_config):
 
     async with generate_async_session(pg_base_config) as session:
         rows = (
-            (await session.execute(select(CSIPAusDefault).order_by(CSIPAusDefault.csipaus_control_id))).scalars().all()
+            (await session.execute(select(CSIPAusDefault).order_by(CSIPAusDefault.csipaus_default_id))).scalars().all()
         )
 
     # original 3 + 1 appended
     assert len(rows) == 4
-    by_id = {r.csipaus_control_id: r for r in rows}
+    by_id = {r.csipaus_default_id: r for r in rows}
 
     # untouched history
     assert by_id[1].active_to == datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC)
@@ -497,7 +520,7 @@ async def test_update_active_default(pg_base_config):
     async with generate_async_session(pg_base_config) as session:
         active = await fetch_active_default(session, datetime(2026, 1, 1, 0, 20, 0, tzinfo=UTC))
     assert active is not None
-    assert active.csipaus_control_id == 4
+    assert active.csipaus_default_id == 4
 
 
 async def test_update_active_default_rolls_forward(pg_base_config):

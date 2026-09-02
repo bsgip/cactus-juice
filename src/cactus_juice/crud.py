@@ -153,6 +153,25 @@ async def fetch_active_default(session: AsyncSession, now: datetime) -> CSIPAusD
     return (await session.execute(stmt)).scalars().one_or_none()
 
 
+async def fetch_defaults_from(
+    session: AsyncSession, now: datetime, start: int = 0, limit: int = 500
+) -> Sequence[CSIPAusDefault]:
+    """Fetches all CSIPAusDefaults that are active from now.
+
+    A record is active when now falls within [active_from, active_to).
+
+    returns records ordered by their active time"""
+    stmt = (
+        select(CSIPAusDefault)
+        .where(CSIPAusDefault.active_to > now)
+        .order_by(CSIPAusDefault.active_from.asc())
+        .offset(start)
+        .limit(limit)
+    )
+
+    return (await session.execute(stmt)).scalars().all()
+
+
 async def update_active_default(session: AsyncSession, now: datetime, values: HasDefaultValues) -> None:
     """Inserts a new CSIPAusDefault record that is active_from now until DEFAULT_MAX_DATE - any existing default records
     that intersect this new range will have their active_to updated to now.
