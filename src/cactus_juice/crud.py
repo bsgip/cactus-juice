@@ -1,11 +1,14 @@
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from cactus_juice.model import CSIPAusControl, CSIPAusControlResponse
+from cactus_juice.csipaus.dto import HasDefaultValues
+from cactus_juice.model import CSIPAusControl, CSIPAusControlResponse, CSIPAusDefault
+
+DEFAULT_MAX_DATE = datetime(9999, 1, 1, tzinfo=UTC)
 
 
 async def fetch_controls_active_from(
@@ -132,3 +135,59 @@ async def fetch_unsent_control_responses(
     )
 
     return (await session.execute(stmt)).scalars().all()
+
+
+async def fetch_active_default(session: AsyncSession, now: datetime) -> CSIPAusDefault | None:
+    """Fetches the CSIPAusDefault that is active at 'now' (or None if there is none available).
+
+    A record is active when now falls within [active_from, active_to) (matching the active_range '[)' bounds)."""
+    stmt = (
+        select(CSIPAusDefault)
+        .where(CSIPAusDefault.active_from <= now)
+        .where(CSIPAusDefault.active_to > now)
+        # The overlap exclusion constraint guarantees at most one match - order/limit are just belt and braces.
+        .order_by(CSIPAusDefault.active_from.desc())
+        .limit(1)
+    )
+
+    return (await session.execute(stmt)).scalars().one_or_none()
+
+
+async def update_active_default(session: AsyncSession, now: datetime, values: HasDefaultValues) -> None:
+    """Inserts a new CSIPAusDefault record that is active_from now until DEFAULT_MAX_DATE - any existing default records
+    that intersect this new range will have their active_to updated to now.
+
+    The intent is to always maintain a rolling history of the "active" defaults through time
+
+    does NOT commit any transaction."""
+
+    # Close off any record still active at (or beyond) now. The active_from <= now guard keeps us from
+    # inverting the range of a future-dated record - if one somehow exists the overlap exclusion
+    # constraint will reject the insert below rather than silently corrupting the history.
+    await session.execute(
+        update(CSIPAusDefault)
+        .where(CSIPAusDefault.active_from <= now)
+        .where(CSIPAusDefault.active_to > now)
+        .values(active_to=now)
+    )
+
+    # The default value columns on CSIPAusDefault - i.e. everything a HasDefaultValues carries. Excludes the
+    # PK and the active_from/active_to (+ computed active_range) window columns.
+    default_value_columns = (
+        "ramp_percent_max_second_hundredths",
+        "connect",
+        "energize",
+        "import_limit_watts",
+        "export_limit_watts",
+        "load_limit_watts",
+        "generation_limit_watts",
+        "storage_target_watts",
+    )
+
+    await session.execute(
+        insert(CSIPAusDefault).values(
+            active_from=now,
+            active_to=DEFAULT_MAX_DATE,
+            **{col: getattr(values, col) for col in default_value_columns},
+        )
+    )

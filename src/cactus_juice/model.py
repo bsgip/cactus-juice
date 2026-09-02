@@ -13,7 +13,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import TSTZRANGE
+from sqlalchemy.dialects.postgresql import TSTZRANGE, ExcludeConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -68,7 +68,16 @@ class CSIPAusDefault(Base):
     There may have been multiple contributing DERControls that generated this composite default."""
 
     __tablename__ = "csipaus_default"
-    __table_args__ = (Index("ix_csipaus_default_active_range", "active_range", postgresql_using="gist"),)
+    __table_args__ = (
+        # A rolling history of defaults must never have two rows active at the same instant - an
+        # overlapping active_range is a data integrity violation. The gist index this constraint
+        # maintains also serves the fetch_active_default lookup.
+        ExcludeConstraint(
+            ("active_range", "&&"),
+            name="excl_csipaus_default_active_range_overlap",
+            using="gist",
+        ),
+    )
 
     csipaus_control_id: Mapped[int] = mapped_column(name="id", primary_key=True, autoincrement=True)
 
@@ -84,6 +93,8 @@ class CSIPAusDefault(Base):
         Computed("tstzrange(active_from, active_to, '[)')", persisted=True),
         nullable=False,
     )
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # These are the various default options we want to track
     ramp_percent_max_second_hundredths: Mapped[int | None] = mapped_column(Integer, nullable=True)  # setGradW

@@ -51,4 +51,19 @@ VALUES (3, 1, 'ccc', '2026-01-01T00:10:00Z', '2025-01-01T00:00:00Z', '2000-01-01
 INSERT INTO csipaus_control_response (csipaus_control_id, response_status, end_device_mrid, not_before, sent_at, created_at)
 VALUES (3, 99, 'ccc', '2026-01-01T00:10:00Z', NULL, '2000-01-01T00:00:00Z');
 
+
+-- ========= csipaus_default ========
+--
+-- A rolling history of "active" defaults. active_to is set to the max date for the currently active record.
+-- active_range is a generated column so it is never inserted directly.
+--
+-- 00:00       00:05       00:10        MAX_DATE
+--   |   #1      |    #2     |            #3 (current)
+INSERT INTO csipaus_default (active_from, active_to, created_at, ramp_percent_max_second_hundredths, connect, energize, import_limit_watts, export_limit_watts, load_limit_watts, generation_limit_watts, storage_target_watts)
+VALUES ('2026-01-01T00:00:00Z', '2026-01-01T00:05:00Z', '2000-01-01T00:00:00Z', 11, TRUE, FALSE, 1001, 1002, 1003, 1004, 1005);
+INSERT INTO csipaus_default (active_from, active_to, created_at, ramp_percent_max_second_hundredths, connect, energize, import_limit_watts, export_limit_watts, load_limit_watts, generation_limit_watts, storage_target_watts)
+VALUES ('2026-01-01T00:05:00Z', '2026-01-01T00:10:00Z', '2000-01-01T00:00:00Z', 21, FALSE, TRUE, 2001, 2002, 2003, 2004, 2005);
+INSERT INTO csipaus_default (active_from, active_to, created_at, ramp_percent_max_second_hundredths, connect, energize, import_limit_watts, export_limit_watts, load_limit_watts, generation_limit_watts, storage_target_watts)
+VALUES ('2026-01-01T00:10:00Z', '9999-1-1T00:00:00Z', '2000-01-01T00:00:00Z', 31, TRUE, TRUE, 3001, 3002, 3003, 3004, 3005);
+
     

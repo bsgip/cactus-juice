@@ -84,4 +84,4 @@ class ActiveValues:
     ramp_percent_max_second_hundredths: int | None
 
     # Unique to DERControl
-    ramp_percent_max_second_hundredths: int | None
+    ramp_time_seconds: int | None

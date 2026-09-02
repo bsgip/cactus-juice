@@ -1,8 +1,8 @@
 """init
 
-Revision ID: 6bc4d255883c
+Revision ID: 14b97a4e5ad6
 Revises:
-Create Date: 2026-09-02 15:41:26.072010
+Create Date: 2026-09-02 17:26:47.300503
 
 """
 
@@ -14,7 +14,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "6bc4d255883c"
+revision: str = "14b97a4e5ad6"
 down_revision: str | Sequence[str] | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -65,6 +65,7 @@ def upgrade() -> None:
             sa.Computed("tstzrange(active_from, active_to, '[)')", persisted=True),
             nullable=False,
         ),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("ramp_percent_max_second_hundredths", sa.Integer(), nullable=True),
         sa.Column("connect", sa.Boolean(), nullable=True),
         sa.Column("energize", sa.Boolean(), nullable=True),
@@ -73,10 +74,10 @@ def upgrade() -> None:
         sa.Column("load_limit_watts", sa.Integer(), nullable=True),
         sa.Column("generation_limit_watts", sa.Integer(), nullable=True),
         sa.Column("storage_target_watts", sa.Integer(), nullable=True),
+        postgresql.ExcludeConstraint(
+            (sa.column("active_range"), "&&"), using="gist", name="excl_csipaus_default_active_range_overlap"
+        ),
         sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(
-        "ix_csipaus_default_active_range", "csipaus_default", ["active_range"], unique=False, postgresql_using="gist"
     )
     op.create_table(
         "meter",
@@ -152,7 +153,6 @@ def downgrade() -> None:
     )
     op.drop_table("csipaus_control_response")
     op.drop_table("meter")
-    op.drop_index("ix_csipaus_default_active_range", table_name="csipaus_default", postgresql_using="gist")
     op.drop_table("csipaus_default")
     op.drop_index(op.f("ix_csipaus_control_finished_at"), table_name="csipaus_control")
     op.drop_table("csipaus_control")
