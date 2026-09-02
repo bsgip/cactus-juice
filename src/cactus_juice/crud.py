@@ -119,7 +119,9 @@ async def upsert_control_responses(session: AsyncSession, responses: list[CSIPAu
 async def fetch_unsent_control_responses(
     session: AsyncSession, now: datetime, start: int = 0, limit: int = 500
 ) -> Sequence[CSIPAusControlResponse]:
-    """Fetches all CSIPAusControlResponse which are due to send (according to now)"""
+    """Fetches all CSIPAusControlResponse which are due to send (according to now)
+
+    Returns ordered by the PK ASC"""
     stmt = (
         select(CSIPAusControlResponse)
         .where(CSIPAusControlResponse.sent_at.is_(None))

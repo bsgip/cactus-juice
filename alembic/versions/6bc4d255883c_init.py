@@ -65,7 +65,7 @@ def upgrade() -> None:
             sa.Computed("tstzrange(active_from, active_to, '[)')", persisted=True),
             nullable=False,
         ),
-        sa.Column("set_grad_watts", sa.Integer(), nullable=True),
+        sa.Column("ramp_percent_max_second_hundredths", sa.Integer(), nullable=True),
         sa.Column("connect", sa.Boolean(), nullable=True),
         sa.Column("energize", sa.Boolean(), nullable=True),
         sa.Column("import_limit_watts", sa.Integer(), nullable=True),

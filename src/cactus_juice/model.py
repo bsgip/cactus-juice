@@ -86,7 +86,7 @@ class CSIPAusDefault(Base):
     )
 
     # These are the various default options we want to track
-    set_grad_watts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ramp_percent_max_second_hundredths: Mapped[int | None] = mapped_column(Integer, nullable=True)  # setGradW
     connect: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     energize: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     import_limit_watts: Mapped[int | None] = mapped_column(Integer, nullable=True)
