@@ -87,8 +87,8 @@ async def fetch_unsent_control_responses(
     """Fetches all CSIPAusControlResponse which are due to send (according to now)"""
     stmt = (
         select(CSIPAusControlResponse)
-        .where(CSIPAusControlResponse.sent_at.is_not(None))
-        .where(CSIPAusControlResponse.not_before < now)
+        .where(CSIPAusControlResponse.sent_at.is_(None))
+        .where(CSIPAusControlResponse.not_before >= now)
         .order_by(CSIPAusControlResponse.csipaus_control_response_id.asc())
         .offset(start)
         .limit(limit)

@@ -8,8 +8,8 @@ from assertical.fake.generator import clone_class_instance, generate_class_insta
 from assertical.fixtures.postgres import generate_async_session
 from sqlalchemy import func, select
 
-from cactus_juice.crud import fetch_controls_active_from, upsert_controls
-from cactus_juice.model import CSIPAusControl
+from cactus_juice.crud import fetch_controls_active_from, fetch_unsent_control_responses, upsert_controls
+from cactus_juice.model import CSIPAusControl, CSIPAusControlResponse
 
 DEFAULT_CREATED_TIME = datetime(2000, 1, 1, tzinfo=UTC)
 
@@ -149,7 +149,7 @@ async def test_upsert_controls(pg_base_config):
     # mrid 1111: both timestamps filled from NULL, everything else untouched
     open_row = by_mrid["1111"]
     assert open_row.csipaus_control_id == 1
-    assert open_row.created_at == DEFAULT_CREATED_TIME
+    assert open_row.created_at == DEFAULT_CREATED_TIME, "Unchanged"
     assert open_row.cancelled_at == conflict_open.cancelled_at
     assert open_row.superseded_at == conflict_open.superseded_at
     assert open_row.import_limit_watts == 101, "Unchanged"
@@ -159,6 +159,7 @@ async def test_upsert_controls(pg_base_config):
     cancelled_row = by_mrid["6666"]
     assert cancelled_row.cancelled_at == BASE_6666_CANCELLED_AT
     assert cancelled_row.superseded_at == NEW_SUPERSEDED_AT
+    assert cancelled_row.created_at == DEFAULT_CREATED_TIME, "Unchanged"
     assert cancelled_row.import_limit_watts == 601, "Unchanged"
     assert cancelled_row.export_limit_watts == 602, "Unchanged"
 
@@ -176,3 +177,24 @@ async def test_upsert_controls(pg_base_config):
     assert noop_row.primacy == 1
     assert noop_row.import_limit_watts == 201, "Unchanged"
     assert noop_row.export_limit_watts == 202, "Unchanged"
+
+
+@pytest.mark.parametrize(
+    "now, start, limit, expected_ids",
+    [
+        (datetime.min, 0, 99, [2, 3, 4, 6]),
+        (datetime(2026, 1, 1, tzinfo=UTC), 0, 99, [2, 3, 4, 6]),
+        (datetime.min, 1, 2, [3, 4]),  # Paging
+        (datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC), 0, 99, [3, 4, 6]),
+        (datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC), 0, 99, [6]),
+        (datetime(2026, 1, 1, 0, 15, 0, tzinfo=UTC), 0, 99, []),
+    ],
+)
+async def test_fetch_unsent_control_responses(
+    pg_base_config, now: datetime, start: int, limit: int, expected_ids: list[int]
+):
+    """Tests the fetched responses match expected values"""
+    async with generate_async_session(pg_base_config) as session:
+        actual = await fetch_unsent_control_responses(session, now=now, start=start, limit=limit)
+        assert [e.csipaus_control_response_id for e in actual] == expected_ids
+        assert_list_type(CSIPAusControlResponse, actual, count=len(expected_ids))

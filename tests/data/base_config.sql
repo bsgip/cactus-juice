@@ -1,6 +1,6 @@
 
 
--- csipaus_control
+-- ========= csipaus_control ========
 --
 -- 00:00    00:05   00:10   00:15
 --   |  #1    |   #2  |   #3  |
@@ -26,4 +26,29 @@ VALUES (0, '6666', 900, '2026-01-01T00:00:00Z', '2026-01-01T00:05:00Z', NULL, '2
 -- Superseded at 10 minutes
 INSERT INTO csipaus_control (primacy, mrid, duration_seconds, started_at, cancelled_at, superseded_at, created_at, ramp_time_seconds, connect, energize, import_limit_watts, export_limit_watts, load_limit_watts, generation_limit_watts, storage_target_watts)
 VALUES (0, '7777', 900, '2026-01-01T00:00:00Z', NULL, '2026-01-01T00:10:00Z', '2000-01-01T00:00:00Z', 700, NULL, NULL, 701, 702, 703, 704, 705);
+    
+
+
+-- ========= csipaus_control_response ========
+--
+-- Sent: #1, #5
+--
+-- Unsent (based on not_before):
+-- 00:00    00:05   00:10
+--   #2       #3    #6
+--            #4
+--     
+INSERT INTO csipaus_control_response (csipaus_control_id, response_status, end_device_mrid, not_before, sent_at, created_at)
+VALUES (1, 1, 'aaa', '2026-01-01T00:00:00Z', '2026-01-01T00:00:01Z', '2000-01-01T00:00:00Z');
+INSERT INTO csipaus_control_response (csipaus_control_id, response_status, end_device_mrid, not_before, sent_at, created_at)
+VALUES (1, 2, 'aaa', '2026-01-01T00:00:00Z', NULL, '2000-01-01T00:00:00Z');
+INSERT INTO csipaus_control_response (csipaus_control_id, response_status, end_device_mrid, not_before, sent_at, created_at)
+VALUES (1, 3, 'aaa', '2026-01-01T00:05:00Z', NULL, '2000-01-01T00:00:00Z');
+INSERT INTO csipaus_control_response (csipaus_control_id, response_status, end_device_mrid, not_before, sent_at, created_at)
+VALUES (2, 1, 'bbb', '2026-01-01T00:05:00Z', NULL, '2000-01-01T00:00:00Z');
+INSERT INTO csipaus_control_response (csipaus_control_id, response_status, end_device_mrid, not_before, sent_at, created_at)
+VALUES (3, 1, 'ccc', '2026-01-01T00:10:00Z', '2000-01-01T00:00:00Z', '2000-01-01T00:00:00Z');
+INSERT INTO csipaus_control_response (csipaus_control_id, response_status, end_device_mrid, not_before, sent_at, created_at)
+VALUES (3, 99, 'ccc', '2026-01-01T00:10:00Z', NULL, '2000-01-01T00:00:00Z');
+
     
