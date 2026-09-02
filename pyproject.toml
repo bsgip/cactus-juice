@@ -36,11 +36,12 @@ dependencies = [
     "pydantic-settings",
     "sqlalchemy",
     "asyncpg",
+    
 ]
 
 [project.optional-dependencies]
 dev = ["alembic", "bandit", "ty", "ruff", "codespell", "coverage", "pytest-cov", "python-dotenv[cli]"]
-test = ["alembic", "pytest", "pytest-xdist"]
+test = ["alembic", "pytest", "pytest-xdist", "pytest-postgresql", "pytest-asyncio", "assertical", "freezegun", "psycopg"]
 
 [tool.setuptools.package-data]
 "cactus_juice" = ["py.typed"]
