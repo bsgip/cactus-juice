@@ -140,13 +140,13 @@ async def fetch_unsent_control_responses(
 async def fetch_active_default(session: AsyncSession, now: datetime) -> CSIPAusDefault | None:
     """Fetches the CSIPAusDefault that is active at 'now' (or None if there is none available).
 
-    A record is active when now falls within [active_from, active_to) (matching the active_range '[)' bounds)."""
+    A record is active when now falls within [started_at, finished_at) (matching the active_range '[)' bounds)."""
     stmt = (
         select(CSIPAusDefault)
-        .where(CSIPAusDefault.active_from <= now)
-        .where(CSIPAusDefault.active_to > now)
+        .where(CSIPAusDefault.started_at <= now)
+        .where(CSIPAusDefault.finished_at > now)
         # The overlap exclusion constraint guarantees at most one match - order/limit are just belt and braces.
-        .order_by(CSIPAusDefault.active_from.desc())
+        .order_by(CSIPAusDefault.started_at.desc())
         .limit(1)
     )
 
@@ -158,13 +158,13 @@ async def fetch_defaults_from(
 ) -> Sequence[CSIPAusDefault]:
     """Fetches all CSIPAusDefaults that are active from now.
 
-    A record is active when now falls within [active_from, active_to).
+    A record is active when now falls within [started_at, finished_at).
 
-    returns records ordered by their active time"""
+    returns records ordered by their active time ASC"""
     stmt = (
         select(CSIPAusDefault)
-        .where(CSIPAusDefault.active_to > now)
-        .order_by(CSIPAusDefault.active_from.asc())
+        .where(CSIPAusDefault.finished_at > now)
+        .order_by(CSIPAusDefault.started_at.asc())
         .offset(start)
         .limit(limit)
     )
@@ -173,25 +173,25 @@ async def fetch_defaults_from(
 
 
 async def update_active_default(session: AsyncSession, now: datetime, values: HasDefaultValues) -> None:
-    """Inserts a new CSIPAusDefault record that is active_from now until DEFAULT_MAX_DATE - any existing default records
-    that intersect this new range will have their active_to updated to now.
+    """Inserts a new CSIPAusDefault record that is started_at now until DEFAULT_MAX_DATE - any existing default records
+    that intersect this new range will have their finished_at updated to now.
 
     The intent is to always maintain a rolling history of the "active" defaults through time
 
     does NOT commit any transaction."""
 
-    # Close off any record still active at (or beyond) now. The active_from <= now guard keeps us from
+    # Close off any record still active at (or beyond) now. The started_at <= now guard keeps us from
     # inverting the range of a future-dated record - if one somehow exists the overlap exclusion
     # constraint will reject the insert below rather than silently corrupting the history.
     await session.execute(
         update(CSIPAusDefault)
-        .where(CSIPAusDefault.active_from <= now)
-        .where(CSIPAusDefault.active_to > now)
-        .values(active_to=now)
+        .where(CSIPAusDefault.started_at <= now)
+        .where(CSIPAusDefault.finished_at > now)
+        .values(finished_at=now)
     )
 
     # The default value columns on CSIPAusDefault - i.e. everything a HasDefaultValues carries. Excludes the
-    # PK and the active_from/active_to (+ computed active_range) window columns.
+    # PK and the started_at/finished_at (+ computed active_range) window columns.
     default_value_columns = (
         "ramp_percent_max_second_hundredths",
         "connect",
@@ -205,8 +205,8 @@ async def update_active_default(session: AsyncSession, now: datetime, values: Ha
 
     await session.execute(
         insert(CSIPAusDefault).values(
-            active_from=now,
-            active_to=DEFAULT_MAX_DATE,
+            started_at=now,
+            finished_at=DEFAULT_MAX_DATE,
             **{col: getattr(values, col) for col in default_value_columns},
         )
     )

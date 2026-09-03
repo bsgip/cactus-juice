@@ -81,8 +81,8 @@ class CSIPAusDefault(Base):
 
     csipaus_default_id: Mapped[int] = mapped_column(name="id", primary_key=True, autoincrement=True)
 
-    active_from: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # When was this set of defaults active from?
-    active_to: Mapped[datetime] = mapped_column(
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # When was this set of defaults active from?
+    finished_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True)
     )  # When was this set of defaults removed - set to max date if it's currently active
 
@@ -90,7 +90,7 @@ class CSIPAusDefault(Base):
     # No Mapped[...] annotation needed - it's derived, not something you set directly.
     active_range = mapped_column(
         TSTZRANGE,
-        Computed("tstzrange(active_from, active_to, '[)')", persisted=True),
+        Computed("tstzrange(started_at, finished_at, '[)')", persisted=True),
         nullable=False,
     )
 

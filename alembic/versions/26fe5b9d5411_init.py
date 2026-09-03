@@ -1,8 +1,8 @@
 """init
 
-Revision ID: 14b97a4e5ad6
+Revision ID: 26fe5b9d5411
 Revises:
-Create Date: 2026-09-02 17:26:47.300503
+Create Date: 2026-09-03 10:47:19.422052
 
 """
 
@@ -14,7 +14,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "14b97a4e5ad6"
+revision: str = "26fe5b9d5411"
 down_revision: str | Sequence[str] | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -57,12 +57,12 @@ def upgrade() -> None:
     op.create_table(
         "csipaus_default",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column("active_from", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("active_to", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("started_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("finished_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column(
             "active_range",
             postgresql.TSTZRANGE(),
-            sa.Computed("tstzrange(active_from, active_to, '[)')", persisted=True),
+            sa.Computed("tstzrange(started_at, finished_at, '[)')", persisted=True),
             nullable=False,
         ),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),

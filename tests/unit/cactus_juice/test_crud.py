@@ -419,9 +419,9 @@ async def test_fetch_unsent_control_responses(
     [
         (datetime.min, None),
         (datetime(2025, 6, 1, tzinfo=UTC), None),  # before the first record
-        (datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC), 1),  # active_from is inclusive
+        (datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC), 1),  # started_at is inclusive
         (datetime(2026, 1, 1, 0, 2, 0, tzinfo=UTC), 1),
-        (datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC), 2),  # active_to is exclusive
+        (datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC), 2),  # finished_at is exclusive
         (datetime(2026, 1, 1, 0, 9, 59, tzinfo=UTC), 2),
         (datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC), 3),
         (datetime(2030, 1, 1, tzinfo=UTC), 3),  # the current record runs to the max date
@@ -445,7 +445,7 @@ async def test_fetch_active_default(pg_base_config, now: datetime, expected_id: 
         (datetime(2025, 6, 1, tzinfo=UTC), 0, 99, [1, 2, 3]),  # before the first record
         (datetime(2025, 6, 1, tzinfo=UTC), 1, 1, [2]),
         (datetime(2025, 6, 1, tzinfo=UTC), 0, 2, [1, 2]),
-        (datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC), 0, 99, [1, 2, 3]),  # active_from is inclusive
+        (datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC), 0, 99, [1, 2, 3]),  # started_at is inclusive
         (datetime(2026, 1, 1, 0, 2, 0, tzinfo=UTC), 0, 99, [1, 2, 3]),
         (datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC), 0, 99, [2, 3]),
         (datetime(2026, 1, 1, 0, 7, 0, tzinfo=UTC), 0, 99, [2, 3]),
@@ -476,8 +476,8 @@ async def test_update_active_default_empty(pg_empty_config, optional_is_none: bo
         )
         assert len(rows) == 1
         entry = rows[0]
-        assert entry.active_from == now
-        assert entry.active_to == DEFAULT_MAX_DATE
+        assert entry.started_at == now
+        assert entry.finished_at == DEFAULT_MAX_DATE
         assert_nowish(entry.created_at)
         assert_class_instance_equality(DefaultValues, entry, new_values)
 
@@ -502,17 +502,17 @@ async def test_update_active_default(pg_base_config):
     by_id = {r.csipaus_default_id: r for r in rows}
 
     # untouched history
-    assert by_id[1].active_to == datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC)
-    assert by_id[2].active_to == datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC)
+    assert by_id[1].finished_at == datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC)
+    assert by_id[2].finished_at == datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC)
 
     # previously active record closed off at now
-    assert by_id[3].active_from == datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC)
-    assert by_id[3].active_to == now
+    assert by_id[3].started_at == datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC)
+    assert by_id[3].finished_at == now
 
     # brand new active record carrying the supplied values
     appended = by_id[4]
-    assert appended.active_from == now
-    assert _as_utc(appended.active_to) == DEFAULT_MAX_DATE
+    assert appended.started_at == now
+    assert _as_utc(appended.finished_at) == DEFAULT_MAX_DATE
     for col in DEFAULT_VALUE_COLUMNS:
         assert getattr(appended, col) == getattr(new_values, col)
 
@@ -534,13 +534,13 @@ async def test_update_active_default_rolls_forward(pg_base_config):
         await session.commit()
 
     async with generate_async_session(pg_base_config) as session:
-        rows = (await session.execute(select(CSIPAusDefault).order_by(CSIPAusDefault.active_from))).scalars().all()
+        rows = (await session.execute(select(CSIPAusDefault).order_by(CSIPAusDefault.started_at))).scalars().all()
 
     assert len(rows) == 5
     for earlier, later in zip(rows, rows[1:], strict=False):
-        assert earlier.active_to == later.active_from, "History must be contiguous with no gaps or overlaps"
-    assert rows[-1].active_from == second
-    assert _as_utc(rows[-1].active_to) == DEFAULT_MAX_DATE
+        assert earlier.finished_at == later.started_at, "History must be contiguous with no gaps or overlaps"
+    assert rows[-1].started_at == second
+    assert _as_utc(rows[-1].finished_at) == DEFAULT_MAX_DATE
 
 
 async def test_update_active_default_no_commit(pg_base_config):
@@ -575,8 +575,8 @@ async def test_csipaus_default_rejects_overlapping_active_range(pg_base_config):
             generate_class_instance(
                 CSIPAusDefault,
                 active_range=None,  # generated column
-                active_from=datetime(2026, 1, 1, 0, 2, 0, tzinfo=UTC),  # lands inside record #1's window
-                active_to=datetime(2026, 1, 1, 0, 30, 0, tzinfo=UTC),
+                started_at=datetime(2026, 1, 1, 0, 2, 0, tzinfo=UTC),  # lands inside record #1's window
+                finished_at=datetime(2026, 1, 1, 0, 30, 0, tzinfo=UTC),
             )
         )
         with pytest.raises(IntegrityError):

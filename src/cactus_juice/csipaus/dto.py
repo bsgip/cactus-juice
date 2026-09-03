@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from pydantic.dataclasses import dataclass
@@ -85,3 +86,11 @@ class ActiveValues:
 
     # Unique to DERControl
     ramp_time_seconds: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduledControlValues:
+    active_from: datetime  # The inclusive start time
+    active_to: datetime | None  # The exclusive end time (None means ongoing)
+
+    values: ActiveValues  # That values
