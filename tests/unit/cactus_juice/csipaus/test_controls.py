@@ -7,10 +7,15 @@ from assertical.fake.generator import generate_class_instance
 
 from cactus_juice.crud import DEFAULT_MAX_DATE
 from cactus_juice.csipaus.controls import (
+    DEFAULT_DEFAULT,
+    ActiveInterval,
     IntervalBoundary,
     drain_intermediate_end_boundaries,
     generate_interval_boundaries,
+    generate_intervals,
+    get_control_finished_at,
 )
+from cactus_juice.csipaus.dto import HasDefaultValues
 from cactus_juice.model import CSIPAusControl, CSIPAusDefault
 
 
@@ -83,10 +88,24 @@ CTL_2_5 = c(dt(2), dt(5))
 CTL_3_5 = c(dt(3), dt(5))
 
 
+CTL_1_3 = c(dt(1), dt(3))
+CTL_3_10 = c(dt(3), dt(10))
+CTL_5_7 = c(dt(5), dt(7))
+CTL_1_MAX = c(dt(1), DEFAULT_MAX_DATE)
+CTL_1_5_CANCEL_9 = c(dt(1), dt(5), cancelled=dt(9))
+CTL_1_10_CANCEL_8_SUPERSEDE_4 = c(dt(1), dt(10), cancelled=dt(8), superseded=dt(4))
+
+
 DEF_1_9 = d(dt(1), dt(9))
 DEF_1_10 = d(dt(1), dt(10))
 DEF_1_11 = d(dt(1), dt(11))
 DEF_2_5 = d(dt(2), dt(5))
+DEF_1_MAX = d(dt(1))
+DEF_1_4 = d(dt(1), dt(4))
+DEF_1_5 = d(dt(1), dt(5))
+DEF_4_9 = d(dt(4), dt(9))
+DEF_5_10 = d(dt(5), dt(10))
+DEF_9_MAX = d(dt(9))
 
 
 def assert_controls_equal_unordered(expected: list[CSIPAusControl], actual: list[CSIPAusControl]) -> None:
@@ -158,6 +177,21 @@ def test_assert_defaults_equal_unordered():
         assert_defaults_equal_unordered([D1, D2], [D1, D3])
 
 
+@pytest.mark.parametrize(
+    "control, expected",
+    [
+        (CTL_1_10, dt(10)),  # No early finish - the natural finished_at is used
+        (CTL_1_10_CANCEL_3, dt(3)),  # cancelled_at brings the finish forward
+        (CTL_1_10_SUPERSEDE_4, dt(4)),  # superseded_at brings the finish forward
+        (CTL_1_10_CANCEL_8_SUPERSEDE_4, dt(4)),  # both set - the earliest of the three wins
+        (CTL_1_5_CANCEL_9, dt(5)),  # cancelled_at AFTER finished_at is ignored
+        (c(dt(1), dt(5), superseded=dt(9)), dt(5)),  # superseded_at AFTER finished_at is ignored
+    ],
+)
+def test_get_control_finished_at(control: CSIPAusControl, expected: datetime):
+    assert get_control_finished_at(control) == expected
+
+
 def assert_ib_equal(expected: IntervalBoundary, actual: IntervalBoundary) -> None:
     assert expected.moment == actual.moment
 
@@ -220,6 +254,24 @@ def assert_ib_equal(expected: IntervalBoundary, actual: IntervalBoundary) -> Non
             ib(dt(10), finish_c=[CTL_1_10], finish_d=[DEF_1_10]),
             [0, 1],
         ),
+        # multiple distinct end times all strictly before new_boundary - each gets its own intermediate
+        # and the returned "next" boundary is a fresh empty one
+        (
+            dt(20),
+            [(dt(5), None, CTL_2_5), (dt(9), DEF_1_9, None), (dt(11), None, CTL_1_11)],
+            [ib(dt(5), finish_c=[CTL_2_5]), ib(dt(9), finish_d=[DEF_1_9]), ib(dt(11), finish_c=[CTL_1_11])],
+            ib(dt(20)),
+            [0, 1, 2],
+        ),
+        # new_boundary == DEFAULT_MAX_DATE with an entry finishing exactly there - this is the real
+        # end-of-run drain: the closing boundary is popped out of the intermediates, not freshly made
+        (
+            DEFAULT_MAX_DATE,
+            [(dt(9), None, CTL_1_9), (DEFAULT_MAX_DATE, DEF_1_MAX, None)],
+            [ib(dt(9), finish_c=[CTL_1_9])],
+            ib(DEFAULT_MAX_DATE, finish_d=[DEF_1_MAX]),
+            [0, 1],
+        ),
     ],
 )
 def test_drain_intermediate_end_boundaries(
@@ -249,6 +301,13 @@ def test_drain_intermediate_end_boundaries(
     assert len(original_upcoming_end_boundaries) == len(upcoming_end_boundaries) + len(expected_removed_indexes)
     for removed_idx in expected_removed_indexes:
         assert original_upcoming_end_boundaries[removed_idx] not in upcoming_end_boundaries
+
+    # Invariant: intermediates are strictly ascending, unique, and always strictly before new_boundary
+    # (any ending that lands exactly on new_boundary is returned as actual_next instead)
+    intermediate_moments = [b.moment for b in actual_intermediates]
+    assert intermediate_moments == sorted(intermediate_moments)
+    assert len(set(intermediate_moments)) == len(intermediate_moments)
+    assert all(moment < new_boundary for moment in intermediate_moments)
 
 
 @pytest.mark.parametrize(
@@ -312,6 +371,34 @@ def test_drain_intermediate_end_boundaries(
                 ib(DEFAULT_MAX_DATE),
             ],
         ),
+        # Entity running all the way to DEFAULT_MAX_DATE - its finish lands on the closing boundary
+        (dt(1), [DEF_1_MAX], [], [ib(dt(1), start_d=[DEF_1_MAX]), ib(DEFAULT_MAX_DATE, finish_d=[DEF_1_MAX])]),
+        (dt(1), [], [CTL_1_MAX], [ib(dt(1), start_c=[CTL_1_MAX]), ib(DEFAULT_MAX_DATE, finish_c=[CTL_1_MAX])]),
+        # Entity that only starts in the future - the leading "now" boundary is still emitted but empty
+        (
+            dt(1),
+            [],
+            [CTL_2_5],
+            [
+                ib(dt(1)),
+                ib(dt(2), start_c=[CTL_2_5]),
+                ib(dt(5), finish_c=[CTL_2_5]),
+                ib(DEFAULT_MAX_DATE),
+            ],
+        ),
+        # Two non-overlapping controls with a gap of no coverage in between
+        (
+            dt(1),
+            [],
+            [CTL_1_3, CTL_5_7],
+            [
+                ib(dt(1), start_c=[CTL_1_3]),
+                ib(dt(3), finish_c=[CTL_1_3]),
+                ib(dt(5), start_c=[CTL_5_7]),
+                ib(dt(7), finish_c=[CTL_5_7]),
+                ib(DEFAULT_MAX_DATE),
+            ],
+        ),
     ],
 )
 def test_generate_interval_boundaries(
@@ -320,8 +407,218 @@ def test_generate_interval_boundaries(
     actual = generate_interval_boundaries(now, defaults, controls)
 
     assert_list_type(IntervalBoundary, actual, count=len(expected))
+
+    # Invariant: boundaries are strictly ascending with a unique moment each (the whole point is to
+    # collapse simultaneous starts/finishes into one shared boundary)
+    moments = [b.moment for b in actual]
+    assert moments == sorted(moments)
+    assert len(set(moments)) == len(moments)
+
     for idx, (e, a) in enumerate(zip(expected, actual, strict=True)):
         try:
             assert_ib_equal(e, a)
         except Exception as exc:
             raise Exception(f"Exception at idx {idx}") from exc
+
+
+def ai(
+    active_from: datetime,
+    active_to: datetime | None,
+    controls: list[CSIPAusControl] | None = None,
+    default: CSIPAusDefault | None = None,
+) -> ActiveInterval:
+    """Succinct shorthand for generating an ActiveInterval - a None default means the implied DEFAULT_DEFAULT"""
+    return ActiveInterval(
+        active_from=active_from,
+        active_to=active_to,
+        active_controls=controls or [],
+        active_default=default if default is not None else DEFAULT_DEFAULT,
+    )
+
+
+def assert_default_equal(expected: HasDefaultValues, actual: HasDefaultValues) -> None:
+    """Compares a resolved active default - handles both a real CSIPAusDefault and the implied DEFAULT_DEFAULT"""
+    if expected is DEFAULT_DEFAULT:
+        assert actual is DEFAULT_DEFAULT
+    else:
+        assert isinstance(actual, CSIPAusDefault)
+        assert_class_instance_equality(CSIPAusDefault, expected, actual, ignored_properties={"active_range"})
+
+
+def assert_ai_equal(expected: ActiveInterval, actual: ActiveInterval) -> None:
+    assert expected.active_from == actual.active_from
+    assert expected.active_to == actual.active_to
+    assert_controls_equal_unordered(expected.active_controls, actual.active_controls)
+    assert_default_equal(expected.active_default, actual.active_default)
+
+
+@pytest.mark.parametrize(
+    "now, defaults, controls, expected",
+    [
+        #
+        # The following all use shorthand functions for brevity (see above for details)
+        #
+        # Nothing at all - a single default-default interval then the unbounded tail from DEFAULT_MAX_DATE
+        (dt(1), [], [], [ai(dt(1), DEFAULT_MAX_DATE), ai(DEFAULT_MAX_DATE, None)]),
+        # Singular default - covered, then falls back to the default-default once it finishes
+        (
+            dt(1),
+            [DEF_1_10],
+            [],
+            [ai(dt(1), dt(10), default=DEF_1_10), ai(dt(10), DEFAULT_MAX_DATE), ai(DEFAULT_MAX_DATE, None)],
+        ),
+        # Default whose started_at precedes now - clamped forward to now
+        (
+            dt(5),
+            [DEF_1_10],
+            [],
+            [ai(dt(5), dt(10), default=DEF_1_10), ai(dt(10), DEFAULT_MAX_DATE), ai(DEFAULT_MAX_DATE, None)],
+        ),
+        # Default that never finishes (runs to DEFAULT_MAX_DATE) - no default-default gap
+        (dt(1), [DEF_1_MAX], [], [ai(dt(1), DEFAULT_MAX_DATE, default=DEF_1_MAX), ai(DEFAULT_MAX_DATE, None)]),
+        # Singular control
+        (
+            dt(1),
+            [],
+            [CTL_1_10],
+            [ai(dt(1), dt(10), controls=[CTL_1_10]), ai(dt(10), DEFAULT_MAX_DATE), ai(DEFAULT_MAX_DATE, None)],
+        ),
+        # Control whose started_at precedes now - clamped forward to now
+        (
+            dt(5),
+            [],
+            [CTL_1_10],
+            [ai(dt(5), dt(10), controls=[CTL_1_10]), ai(dt(10), DEFAULT_MAX_DATE), ai(DEFAULT_MAX_DATE, None)],
+        ),
+        # Control that never finishes (runs to DEFAULT_MAX_DATE)
+        (dt(1), [], [CTL_1_MAX], [ai(dt(1), DEFAULT_MAX_DATE, controls=[CTL_1_MAX]), ai(DEFAULT_MAX_DATE, None)]),
+        # Control that only starts in the future - leading interval is default-default with no controls
+        (
+            dt(1),
+            [],
+            [CTL_2_5],
+            [
+                ai(dt(1), dt(2)),
+                ai(dt(2), dt(5), controls=[CTL_2_5]),
+                ai(dt(5), DEFAULT_MAX_DATE),
+                ai(DEFAULT_MAX_DATE, None),
+            ],
+        ),
+        # Two non-overlapping controls - the gap between them is a bare default-default interval
+        (
+            dt(1),
+            [],
+            [CTL_1_3, CTL_5_7],
+            [
+                ai(dt(1), dt(3), controls=[CTL_1_3]),
+                ai(dt(3), dt(5)),
+                ai(dt(5), dt(7), controls=[CTL_5_7]),
+                ai(dt(7), DEFAULT_MAX_DATE),
+                ai(DEFAULT_MAX_DATE, None),
+            ],
+        ),
+        # Overlapping controls - middle interval carries both
+        (
+            dt(1),
+            [],
+            [CTL_1_10, CTL_2_5],
+            [
+                ai(dt(1), dt(2), controls=[CTL_1_10]),
+                ai(dt(2), dt(5), controls=[CTL_1_10, CTL_2_5]),
+                ai(dt(5), dt(10), controls=[CTL_1_10]),
+                ai(dt(10), DEFAULT_MAX_DATE),
+                ai(DEFAULT_MAX_DATE, None),
+            ],
+        ),
+        # A control overlapping a default - both resolved together on the shared interval
+        (
+            dt(1),
+            [DEF_1_10],
+            [CTL_2_5],
+            [
+                ai(dt(1), dt(2), default=DEF_1_10),
+                ai(dt(2), dt(5), controls=[CTL_2_5], default=DEF_1_10),
+                ai(dt(5), dt(10), default=DEF_1_10),
+                ai(dt(10), DEFAULT_MAX_DATE),
+                ai(DEFAULT_MAX_DATE, None),
+            ],
+        ),
+        # Back-to-back defaults - each interval resolves to exactly the one that is active
+        (
+            dt(1),
+            [DEF_1_5, DEF_5_10],
+            [],
+            [
+                ai(dt(1), dt(5), default=DEF_1_5),
+                ai(dt(5), dt(10), default=DEF_5_10),
+                ai(dt(10), DEFAULT_MAX_DATE),
+                ai(DEFAULT_MAX_DATE, None),
+            ],
+        ),
+        # now clamps a default and multiple controls onto a single shared opening boundary
+        (
+            dt(5),
+            [DEF_1_10],
+            [CTL_1_10, CTL_3_10],
+            [
+                ai(dt(5), dt(10), controls=[CTL_1_10, CTL_3_10], default=DEF_1_10),
+                ai(dt(10), DEFAULT_MAX_DATE),
+                ai(DEFAULT_MAX_DATE, None),
+            ],
+        ),
+        # Cancelled control finishes early
+        (
+            dt(1),
+            [],
+            [CTL_1_10_CANCEL_3],
+            [
+                ai(dt(1), dt(3), controls=[CTL_1_10_CANCEL_3]),
+                ai(dt(3), DEFAULT_MAX_DATE),
+                ai(DEFAULT_MAX_DATE, None),
+            ],
+        ),
+        # Everything at once - overlapping controls (one cancelled early) across three back-to-back defaults
+        (
+            dt(1),
+            [DEF_1_4, DEF_4_9, DEF_9_MAX],
+            [CTL_1_10, CTL_1_10_CANCEL_3, CTL_2_5, CTL_3_5],
+            [
+                ai(dt(1), dt(2), controls=[CTL_1_10, CTL_1_10_CANCEL_3], default=DEF_1_4),
+                ai(dt(2), dt(3), controls=[CTL_1_10, CTL_1_10_CANCEL_3, CTL_2_5], default=DEF_1_4),
+                ai(dt(3), dt(4), controls=[CTL_1_10, CTL_2_5, CTL_3_5], default=DEF_1_4),
+                ai(dt(4), dt(5), controls=[CTL_1_10, CTL_2_5, CTL_3_5], default=DEF_4_9),
+                ai(dt(5), dt(9), controls=[CTL_1_10], default=DEF_4_9),
+                ai(dt(9), dt(10), controls=[CTL_1_10], default=DEF_9_MAX),
+                ai(dt(10), DEFAULT_MAX_DATE, default=DEF_9_MAX),
+                ai(DEFAULT_MAX_DATE, None),
+            ],
+        ),
+    ],
+)
+def test_generate_intervals(
+    now: datetime, defaults: list[CSIPAusDefault], controls: list[CSIPAusControl], expected: list[ActiveInterval]
+):
+    actual = generate_intervals(now, defaults, controls)
+
+    assert_list_type(ActiveInterval, actual, count=len(expected))
+
+    # Structural invariants: first interval opens at now, the sequence is contiguous with no gaps/overlaps,
+    # every interval bar the last is bounded and non-empty, and only the final interval is unbounded
+    assert actual[0].active_from == now
+    assert actual[-1].active_to is None
+    for earlier, later in zip(actual, actual[1:], strict=False):
+        assert earlier.active_to == later.active_from
+        assert earlier.active_to is not None and earlier.active_from < earlier.active_to
+
+    for idx, (e, a) in enumerate(zip(expected, actual, strict=True)):
+        try:
+            assert_ai_equal(e, a)
+        except Exception as exc:
+            raise Exception(f"Exception at idx {idx}") from exc
+
+
+def test_generate_intervals_raises_for_overlapping_defaults():
+    """Two defaults active over the same instant is a data-integrity violation (the DB enforces it with an
+    exclusion constraint). If it somehow reaches this code it must fail loudly rather than silently drop one."""
+    with pytest.raises(ValueError):
+        generate_intervals(dt(1), [DEF_1_10, DEF_2_5], [])

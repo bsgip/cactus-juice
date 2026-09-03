@@ -180,7 +180,7 @@ def generate_intervals(
             active_from=active_from,
             active_to=active_to,
             active_controls=list(controls.values()),
-            active_default=defaults[0] if defaults else DEFAULT_DEFAULT,
+            active_default=all_defaults[0] if all_defaults else DEFAULT_DEFAULT,
         )
 
     active_controls_by_id: dict[int, CSIPAusControl] = {}
