@@ -7,14 +7,11 @@ import psycopg
 import pytest
 from alembic.config import Config
 from assertical.fixtures.environment import environment_snapshot
-from assertical.fixtures.postgres import generate_async_conn_str_from_connection
 from psycopg import Connection
 from pytest_postgresql.executors import PostgreSQLExecutor
 from pytest_postgresql.janitor import DatabaseJanitor
-from sqlalchemy import NullPool, create_engine
 
 from alembic import command
-from cactus_juice.model import Base
 
 # Name of the throwaway database used (once per test session) to run the full alembic migration
 # chain against so its resulting schema/data can be dumped for pg_migrated_schema_dump
@@ -72,7 +69,6 @@ def pg_migrated_schema_dump(postgresql_proc: PostgreSQLExecutor) -> Generator[st
         user=postgresql_proc.user,
         host=postgresql_proc.host,
         port=postgresql_proc.port,
-        version=postgresql_proc.version,
         dbname=MIGRATED_SCHEMA_DB_NAME,
         password=postgresql_proc.password,
     )
@@ -152,7 +148,7 @@ def pg_empty_config(postgresql, preserved_environment, pg_migrated_schema_dump: 
 @pytest.fixture
 def pg_base_config(pg_empty_config):
     """Adds a very minimal config to the database from base_config.sql"""
-    with open("tests/data/base_config.sql") as f:
+    with open("tests/data/sql/base_config.sql") as f:
         sql = f.read()
 
     execute_test_sql(pg_empty_config, sql)

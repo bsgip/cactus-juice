@@ -31,8 +31,9 @@ import struct
 import sys
 import time
 from dataclasses import dataclass, field
+from typing import Any, TextIO
 
-from pymodbus.client import ModbusSerialClient, ModbusTcpClient
+from pymodbus.client import ModbusBaseSyncClient, ModbusSerialClient, ModbusTcpClient
 
 # --------------------------------------------------------------------------
 # Device identification / factory settings (section 3.7, native addresses)
@@ -259,7 +260,7 @@ class Reading:
 
 
 class SatecMeter:
-    def __init__(self, profile: Profile, client, unit: int = 1, float_mode: bool = False):
+    def __init__(self, profile: Profile, client: ModbusBaseSyncClient, unit: int = 1, float_mode: bool = False) -> None:
         self.profile = profile
         self.client = client
         self.unit = unit
@@ -280,18 +281,18 @@ class SatecMeter:
         try:
             rr = self.client.read_holding_registers(address, count=count, device_id=self.unit)
         except TypeError:
-            rr = self.client.read_holding_registers(address, count=count, slave=self.unit)
+            rr = self.client.read_holding_registers(address, count=count, slave=self.unit)  # ty:ignore[unknown-argument]
         if rr.isError():
-            raise IOError(f"Modbus read failed at {address}: {rr}")
+            raise OSError(f"Modbus read failed at {address}: {rr}")
         return rr.registers
 
     def _write(self, address: int, value: int) -> None:
         try:
             rq = self.client.write_register(address, value, device_id=self.unit)
         except TypeError:
-            rq = self.client.write_register(address, value, slave=self.unit)
+            rq = self.client.write_register(address, value, slave=self.unit)  # ty:ignore[unknown-argument]
         if rq.isError():
-            raise IOError(f"Modbus write failed at {address}: {rq}")
+            raise OSError(f"Modbus write failed at {address}: {rq}")
 
     @staticmethod
     def _u32(regs: list[int], i: int) -> int:
@@ -300,7 +301,7 @@ class SatecMeter:
 
     def _decode32(self, regs: list[int]) -> list[float]:
         out = []
-        for lo, hi in zip(regs[0::2], regs[1::2]):
+        for lo, hi in zip(regs[0::2], regs[1::2], strict=True):
             raw = struct.pack(">HH", hi, lo)
             if self.float_mode:
                 out.append(struct.unpack(">f", raw)[0])
@@ -312,7 +313,7 @@ class SatecMeter:
         start, fields = block
         values = self._decode32(self._read(start, len(fields) * 2))
         out = {}
-        for name, value in zip(fields, values):
+        for name, value in zip(fields, values, strict=True):
             if not self.float_mode and name in SCALE:
                 value *= SCALE[name]
             out[name] = value
@@ -384,9 +385,9 @@ class SatecMeter:
         0 = int32, 1 = float32, so 0b010101 = 21 selects float everywhere."""
         if not self.profile.float_capable:
             raise RuntimeError(f"{self.profile.name} has no float register mode")
-        self._write(self.profile.reg_authorization, password)
-        self._write(self.profile.reg_32bit_type, 21)
-        self._write(self.profile.reg_authorization, 0)
+        self._write(self.profile.reg_authorization or 0, password)
+        self._write(self.profile.reg_32bit_type or 0, 21)
+        self._write(self.profile.reg_authorization or 0, 0)
         self.float_mode = True
 
 
@@ -396,7 +397,7 @@ class SatecMeter:
 
 
 class TextWriter:
-    def __init__(self, stream):
+    def __init__(self, stream: TextIO) -> None:
         self.stream = stream
 
     def write(self, reading: Reading) -> None:
@@ -411,7 +412,7 @@ class CsvWriter:
     """One row per sample. The header is written from the first reading's
     keys, so the column set is fixed for the life of the file."""
 
-    def __init__(self, stream):
+    def __init__(self, stream: TextIO) -> None:
         self.stream = stream
         self.writer = None
         self.fields = None
@@ -427,7 +428,7 @@ class CsvWriter:
             self.fields = list(row)
             self.writer = csv.DictWriter(self.stream, fieldnames=self.fields)
             self.writer.writeheader()
-        self.writer.writerow({k: row.get(k, "") for k in self.fields})
+        self.writer.writerow({k: row.get(k, "") for k in (self.fields or [])})
         self.stream.flush()
 
     def close(self) -> None:
@@ -438,7 +439,7 @@ class JsonWriter:
     """Newline-delimited JSON -- one object per line, so the file stays valid
     and tailable even if the process is interrupted."""
 
-    def __init__(self, stream):
+    def __init__(self, stream: TextIO) -> None:
         self.stream = stream
 
     def write(self, reading: Reading) -> None:
@@ -458,7 +459,7 @@ class JsonWriter:
 WRITERS = {"text": TextWriter, "csv": CsvWriter, "json": JsonWriter}
 
 
-def build_client(args):
+def build_client(args: Any) -> ModbusBaseSyncClient:  # noqa: ANN401
     if args.host:
         return ModbusTcpClient(args.host, port=args.port_tcp, timeout=args.timeout)
     return ModbusSerialClient(
@@ -466,7 +467,7 @@ def build_client(args):
     )
 
 
-def main() -> None:
+def main() -> int:
     ap = argparse.ArgumentParser(description="Poll a SATEC meter over Modbus")
     ap.add_argument("--model", default="em133", choices=sorted(PROFILES))
     ap.add_argument("--port", default="/dev/ttyUSB0", help="serial device")
@@ -540,7 +541,7 @@ def main() -> None:
         writer.close()
     except KeyboardInterrupt:
         pass
-    except (IOError, OSError) as exc:
+    except OSError as exc:
         # A one-shot read is likely being called from a script or a
         # monitoring check, so fail with a usable exit code and a single
         # line on stderr rather than a traceback.
@@ -551,6 +552,8 @@ def main() -> None:
             stream.close()
         meter.close()
 
+    return 0
+
 
 if __name__ == "__main__":
-    sys.exit(main() or 0)
+    sys.exit(main())

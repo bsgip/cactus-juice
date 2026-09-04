@@ -38,12 +38,14 @@ dependencies = [
     "pydantic-settings",
     "sqlalchemy",
     "asyncpg",
-    
+    "envoy-schema>=2,<3",
+    "aiohttp>=3,<4",
+    "pydantic_xml[lxml]>=2.11.7,<3",
 ]
 
 [project.optional-dependencies]
-dev = ["alembic", "bandit", "ty", "ruff", "codespell", "coverage", "pytest-cov", "python-dotenv[cli]"]
-test = ["alembic", "pytest", "pytest-xdist", "pytest-postgresql", "pytest-asyncio", "assertical", "freezegun", "psycopg"]
+dev = ["alembic", "bandit", "ty", "ruff", "codespell", "coverage", "pytest-cov", "python-dotenv[cli]", "lxml-stubs"]
+test = ["alembic", "pytest", "pytest-xdist", "pytest-postgresql", "pytest-asyncio", "pytest-aiohttp", "assertical", "freezegun", "psycopg"]
 
 [tool.setuptools.package-data]
 "cactus_juice" = ["py.typed"]
