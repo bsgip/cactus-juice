@@ -7,7 +7,7 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cactus_juice.crud import DEFAULT_MAX_DATE, fetch_controls_active_from, fetch_defaults_from
-from cactus_juice.csipaus.dto import DefaultValues, HasDefaultValues, ScheduledControlValues
+from cactus_juice.csipaus.dto import ActiveValues, DefaultValues, HasDefaultValues, ScheduledControlValues
 from cactus_juice.model import CSIPAusControl, CSIPAusDefault
 
 
@@ -178,7 +178,7 @@ def generate_intervals(
             raise ValueError(f"Found {len(all_defaults)} defaults overlapping in range [{active_from=} {active_to=})")
         return ActiveInterval(
             active_from=active_from,
-            active_to=active_to,
+            active_to=active_to if active_to is not None and active_to < DEFAULT_MAX_DATE else None,
             active_controls=list(controls.values()),
             active_default=all_defaults[0] if all_defaults else DEFAULT_DEFAULT,
         )
@@ -225,19 +225,103 @@ def generate_intervals(
         )
     else:
         last_finish = resulting_active_intervals[-1].active_to
-        if last_finish is None:
-            raise ValueError("Data error - the last interval should NOT be unbounded. This is an error with inputs.")
-
-        resulting_active_intervals.append(
-            _new_active_interval(
-                active_from=last_finish,
-                active_to=None,
-                controls=active_controls_by_id,
-                defaults=active_defaults_by_id,
+        if last_finish is not None:
+            resulting_active_intervals.append(
+                _new_active_interval(
+                    active_from=last_finish,
+                    active_to=None,
+                    controls=active_controls_by_id,
+                    defaults=active_defaults_by_id,
+                )
             )
-        )
 
     return resulting_active_intervals
+
+
+def active_interval_to_control_values(ai: ActiveInterval) -> ScheduledControlValues:  # noqa: C901
+    """Converts a set of controls/defaults that overlap within an interval into a definitive set of active values.
+
+    Considers primacy of any controls and their defaults"""
+
+    connect: bool | None = None
+    energize: bool | None = None
+    import_limit_watts: int | None = None
+    export_limit_watts: int | None = None
+    load_limit_watts: int | None = None
+    generation_limit_watts: int | None = None
+    storage_target_watts: int | None = None
+    ramp_percent_max_second_hundredths: int | None = None
+    ramp_time_seconds: int | None = None
+
+    # From highest to lowest priority - assign values (if not already assigned) - this ensures that the first (highest)
+    # priority value is set for each opMod command
+    for control in sorted(
+        ai.active_controls, key=lambda c: (c.primacy, -c.started_at.timestamp(), -c.csipaus_control_id)
+    ):  # Sort on primacy ASC, started_at DESC, id DESC
+        if control.connect is not None and connect is None:
+            connect = control.connect
+
+        if control.energize is not None and energize is None:
+            energize = control.energize
+
+        if control.import_limit_watts is not None and import_limit_watts is None:
+            import_limit_watts = control.import_limit_watts
+
+        if control.export_limit_watts is not None and export_limit_watts is None:
+            export_limit_watts = control.export_limit_watts
+
+        if control.load_limit_watts is not None and load_limit_watts is None:
+            load_limit_watts = control.load_limit_watts
+
+        if control.generation_limit_watts is not None and generation_limit_watts is None:
+            generation_limit_watts = control.generation_limit_watts
+
+        if control.storage_target_watts is not None and storage_target_watts is None:
+            storage_target_watts = control.storage_target_watts
+
+        if control.ramp_time_seconds is not None and ramp_time_seconds is None:
+            ramp_time_seconds = control.ramp_time_seconds
+
+    # Now we consider all the defaults to take effect if none of the above got set
+    if ai.active_default.connect is not None and connect is None:
+        connect = ai.active_default.connect
+
+    if ai.active_default.energize is not None and energize is None:
+        energize = ai.active_default.energize
+
+    if ai.active_default.import_limit_watts is not None and import_limit_watts is None:
+        import_limit_watts = ai.active_default.import_limit_watts
+
+    if ai.active_default.export_limit_watts is not None and export_limit_watts is None:
+        export_limit_watts = ai.active_default.export_limit_watts
+
+    if ai.active_default.load_limit_watts is not None and load_limit_watts is None:
+        load_limit_watts = ai.active_default.load_limit_watts
+
+    if ai.active_default.generation_limit_watts is not None and generation_limit_watts is None:
+        generation_limit_watts = ai.active_default.generation_limit_watts
+
+    if ai.active_default.storage_target_watts is not None and storage_target_watts is None:
+        storage_target_watts = ai.active_default.storage_target_watts
+
+    if ai.active_default.ramp_percent_max_second_hundredths is not None and ramp_percent_max_second_hundredths is None:
+        ramp_percent_max_second_hundredths = ai.active_default.ramp_percent_max_second_hundredths
+
+    return ScheduledControlValues(
+        active_from=ai.active_from,
+        active_to=ai.active_to,
+        values=ActiveValues(
+            connect=connect,
+            energize=energize,
+            import_limit_watts=import_limit_watts,
+            export_limit_watts=export_limit_watts,
+            load_limit_watts=load_limit_watts,
+            generation_limit_watts=generation_limit_watts,
+            storage_target_watts=storage_target_watts,
+            ramp_percent_max_second_hundredths=ramp_percent_max_second_hundredths,
+            ramp_time_seconds=ramp_time_seconds,
+        ),
+    )
 
 
 async def calculate_schedule_values(session: AsyncSession, now: datetime) -> list[ScheduledControlValues]:
@@ -251,3 +335,6 @@ async def calculate_schedule_values(session: AsyncSession, now: datetime) -> lis
     # Consult the DB to get the raw data - these will all be sorted in ascending "start" times
     defaults = await fetch_defaults_from(session, now)
     controls = await fetch_controls_active_from(session, now)
+
+    # The intervals can be collapsed directly into scheduled values
+    return [active_interval_to_control_values(ai) for ai in generate_intervals(now, defaults, controls)]
