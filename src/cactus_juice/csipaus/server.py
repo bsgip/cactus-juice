@@ -4,29 +4,17 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from http import HTTPMethod, HTTPStatus
-from typing import TypeVar
 
 from aiohttp import ClientResponse, ClientSession
 from envoy_schema.server.schema.sep2.identification import List, Resource, SubscribableList
 
+from cactus_juice.csipaus.config import HttpContext
 from cactus_juice.csipaus.constants import MIME_TYPE_SEP2
 from cactus_juice.error import RequestError
 
 RATE_LIMIT_RETRY_DELAYS = (5, 15, 30)  # seconds to wait between retries on 429
 
 logger = logging.getLogger(__name__)
-
-AnyResourceType = TypeVar("AnyResourceType", bound=Resource)
-AnyListType = TypeVar("AnyListType", bound=List | SubscribableList)
-AnyType = TypeVar("AnyType")
-
-
-@dataclass(frozen=True, slots=True)
-class HttpContext:
-    """Used to run all CSIP Aus HTTP connections"""
-
-    session: ClientSession
-    user_agent: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,7 +194,7 @@ def build_paging_params(
         return ""
 
 
-async def paginate_list_resource_items[ListT: Resource, ChildT: Resource](
+async def paginate_list_resource_items[ListT: List | SubscribableList, ChildT: Resource](
     list_type: type[ListT],
     context: HttpContext,
     list_href: str,
@@ -250,7 +238,7 @@ async def paginate_list_resource_items[ListT: Resource, ChildT: Resource](
     return all_items
 
 
-async def fetch_list_page[ListT: Resource, ChildT: Resource](
+async def fetch_list_page[ListT: List | SubscribableList, ChildT: Resource](
     list_type: type[ListT],
     context: HttpContext,
     list_href: str,

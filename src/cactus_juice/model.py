@@ -8,9 +8,11 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     UniqueConstraint,
     func,
+    null,
     text,
 )
 from sqlalchemy.dialects.postgresql import TSTZRANGE, ExcludeConstraint
@@ -183,3 +185,41 @@ class CSIPAusControlResponse(Base):
             name="uc_csipaus_control_response_control_device_status",
         ),
     )
+
+
+class CSIPAusConfig(Base):
+    """Represents the current configuration for accessing a CSIP-AUS server - the active config is the entry with the
+    most recent created_at"""
+
+    __tablename__ = "csipaus_config"
+
+    csipaus_config_id: Mapped[int] = mapped_column(name="id", primary_key=True, autoincrement=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    # Client config
+    is_aggregator: Mapped[bool] = mapped_column(
+        Boolean, server_default="TRUE"
+    )  # True if this is an aggregator client, False if Device client
+    certificate_pem: Mapped[bytes | None] = mapped_column(
+        LargeBinary, nullable=True
+    )  # PEM encoded X509 client cert for mTLS to server
+    key_pem: Mapped[bytes | None] = mapped_column(
+        LargeBinary, nullable=True
+    )  # PEM encoded X509 client key for mTLS to server
+    nmi: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )  # What NMI should be registered as a connection point ID?
+    client_pen: Mapped[int | None] = mapped_column(
+        INTEGER, nullable=True
+    )  # Private Enterprise Number used to encode mrids
+
+    # Server config
+    dcap_uri: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )  # DeviceCapability URI - This *could* just be the host and the v1.3 endpoint could be found via .well-known
+    serca_pem: Mapped[bytes | None] = mapped_column(
+        LargeBinary, nullable=True
+    )  # PEM encoded X509 server cert for mTLS to check
+    verify_hostname: Mapped[bool] = mapped_column(Boolean, server_default="TRUE")
+    verify_ssl: Mapped[bool] = mapped_column(Boolean, server_default="TRUE")

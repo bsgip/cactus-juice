@@ -17,10 +17,10 @@ from envoy_schema.server.schema.sep2.end_device import (
     EndDeviceResponse,
 )
 
+from cactus_juice.csipaus.config import HttpContext
 from cactus_juice.csipaus.constants import MIME_TYPE_SEP2
 from cactus_juice.csipaus.server import (
     RATE_LIMIT_RETRY_DELAYS,
-    HttpContext,
     fetch_list_page,
     get_resource,
     make_request,

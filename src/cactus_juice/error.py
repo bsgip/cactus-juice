@@ -4,6 +4,12 @@ class BaseJuiceError(Exception):
     pass
 
 
+class ConfigError(BaseJuiceError):
+    """Something went wrong when trying to configure/start the service"""
+
+    pass
+
+
 class RequestError(BaseJuiceError):
     """Something went wrong when accessing a remote service"""
 
