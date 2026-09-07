@@ -225,6 +225,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "asyncpg" },
+    { name = "cactus-test-definitions" },
     { name = "cryptography" },
     { name = "envoy-schema" },
     { name = "fastapi" },
@@ -266,6 +267,7 @@ requires-dist = [
     { name = "assertical", marker = "extra == 'test'" },
     { name = "asyncpg" },
     { name = "bandit", marker = "extra == 'dev'" },
+    { name = "cactus-test-definitions" },
     { name = "codespell", marker = "extra == 'dev'" },
     { name = "coverage", marker = "extra == 'dev'" },
     { name = "cryptography" },
@@ -289,6 +291,20 @@ requires-dist = [
     { name = "ty", marker = "extra == 'dev'" },
 ]
 provides-extras = ["dev", "test"]
+
+[[package]]
+name = "cactus-test-definitions"
+version = "1.16.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "dataclass-wizard" },
+    { name = "pyyaml" },
+    { name = "pyyaml-include" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6e/e7/480d7bf099332422627a52880ec46026118e5043c244e04c003c564c1adb/cactus_test_definitions-1.16.5.tar.gz", hash = "sha256:20da5befd847822c2b07b793281a7407e25139596e18d722888bb2b998d51d63", size = 186741, upload-time = "2026-08-25T00:03:24.801Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4c/95/ce7283551bb2b8805f16bbdedb63af3853e1e58695bd10b6724754c1887f/cactus_test_definitions-1.16.5-py3-none-any.whl", hash = "sha256:32500e459e2049d6e69819e50949d44e1a1ba3c5a6991f0a4907e979d19b73e7", size = 365211, upload-time = "2026-08-25T00:03:23.167Z" },
+]
 
 [[package]]
 name = "certifi"
@@ -519,6 +535,15 @@ wheels = [
 ]
 
 [[package]]
+name = "dataclass-wizard"
+version = "0.35.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/64/c5/10f2bd575b4fee1cf26b0ffa5fead2d6525f950a797566437a51fa08a94f/dataclass-wizard-0.35.0.tar.gz", hash = "sha256:8e4b254991bf93416a48e2911bb985e3787cff11f00270c3d1165d2523cb3fb6", size = 295578, upload-time = "2025-01-20T04:09:52.344Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3a/95/968dff23cfd82806bf0e2d1c155227717046aed5e7afd8bc0fefdc7eaaf3/dataclass_wizard-0.35.0-py2.py3-none-any.whl", hash = "sha256:3bb19292477f0bebb12e9cc9178f1a6b93d133af4ae065abf14b713142b32edf", size = 176558, upload-time = "2025-01-20T04:09:49.563Z" },
+]
+
+[[package]]
 name = "envoy-schema"
 version = "2.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -639,6 +664,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/89/76/c615883b7b521ead2944bb3480398cbb07e12b7b4e4d073d3752eb721558/frozenlist-1.8.0-cp314-cp314t-win_amd64.whl", hash = "sha256:06be8f67f39c8b1dc671f5d83aaefd3358ae5cdcf8314552c57e7ed3e6475bdd", size = 49451, upload-time = "2025-10-06T05:37:53.425Z" },
     { url = "https://files.pythonhosted.org/packages/e0/a3/5982da14e113d07b325230f95060e2169f5311b1017ea8af2a29b374c289/frozenlist-1.8.0-cp314-cp314t-win_arm64.whl", hash = "sha256:102e6314ca4da683dca92e3b1355490fed5f313b768500084fbe6371fddfdb79", size = 42507, upload-time = "2025-10-06T05:37:54.513Z" },
     { url = "https://files.pythonhosted.org/packages/9a/9a/e35b4a917281c0b8419d4207f4334c8e8c5dbf4f3f5f9ada73958d937dcc/frozenlist-1.8.0-py3-none-any.whl", hash = "sha256:0c18a16eab41e82c295618a77502e17b195883241c563b00f0aa5106fc4eaa0d", size = 13409, upload-time = "2025-10-06T05:38:16.721Z" },
+]
+
+[[package]]
+name = "fsspec"
+version = "2026.7.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/00/78/f34251dadb8f3921264a1d9b8946f5e542014ee2614b285261b4e40e6775/fsspec-2026.7.0.tar.gz", hash = "sha256:c803c40f4cf860b49dea58ee3e1c33cb9c790520e233537e1340049f89b82a88", size = 317040, upload-time = "2026-07-28T16:34:51.052Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fd/3c/6a2bf344106328fd04963664a60b9bb6496fc25df8e962fcdc1367285fb9/fsspec-2026.7.0-py3-none-any.whl", hash = "sha256:b57ddbafedfaef7018c1ecab32aa200a9d7ca26b77965f64e48b70061249d279", size = 206583, upload-time = "2026-07-28T16:34:49.538Z" },
 ]
 
 [[package]]
@@ -1455,6 +1489,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/da/92/1446574745d74df0c92e6aa4a7b0b3130706a4142b2d1a5869f2eaa423c6/pyyaml-6.0.3-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:16249ee61e95f858e83976573de0f5b2893b3677ba71c9dd36b9cf8be9ac6d65", size = 829923, upload-time = "2025-09-25T21:32:54.537Z" },
     { url = "https://files.pythonhosted.org/packages/f0/7a/1c7270340330e575b92f397352af856a8c06f230aa3e76f86b39d01b416a/pyyaml-6.0.3-cp314-cp314t-win_amd64.whl", hash = "sha256:4ad1906908f2f5ae4e5a8ddfce73c320c2a1429ec52eafd27138b7f1cbe341c9", size = 174062, upload-time = "2025-09-25T21:32:55.767Z" },
     { url = "https://files.pythonhosted.org/packages/f1/12/de94a39c2ef588c7e6455cfbe7343d3b2dc9d6b6b2f40c4c6565744c873d/pyyaml-6.0.3-cp314-cp314t-win_arm64.whl", hash = "sha256:ebc55a14a21cb14062aa4162f906cd962b28e2e9ea38f9b4391244cd8de4ae0b", size = 149341, upload-time = "2025-09-25T21:32:56.828Z" },
+]
+
+[[package]]
+name = "pyyaml-include"
+version = "2.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "fsspec" },
+    { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0f/8c/4bdc1bd9676e9eb49237b3750562e9794b7585281448909fa1837c92ca27/pyyaml_include-2.2.tar.gz", hash = "sha256:6f0c7e2ac56cdd9cc305b04122817b55514e6ce8584869fae2bc2a4ef2e0d40f", size = 29854, upload-time = "2024-11-09T09:36:16.915Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/56/1f/ae83ff547e70cd3aeefe2ebaeeef41c4e1fd5ed2453396d249d17c3a7ead/pyyaml_include-2.2-py3-none-any.whl", hash = "sha256:489fff69f78bad8b9509d006297a0140fd91382a66775b8b1da0ce7e126c1815", size = 29565, upload-time = "2024-11-09T09:36:15.241Z" },
 ]
 
 [[package]]

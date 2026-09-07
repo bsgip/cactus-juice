@@ -1,6 +1,8 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    BIGINT,
+    DOUBLE_PRECISION,
     INTEGER,
     Boolean,
     Computed,
@@ -22,6 +24,42 @@ class Base(DeclarativeBase):
     pass
 
 
+class OCPPReading(Base):
+    """Represents a reading via OCPP - these will be instantaneous samplings"""
+
+    __tablename__ = "ocpp_reading"
+
+    ocpp_reading_id: Mapped[int] = mapped_column(BIGINT, name="id", primary_key=True, autoincrement=True)
+
+    reading_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    frequency_hz: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    import_active_power_watts: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    export_active_power_watts: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    import_reactive_power_var: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    export_reactive_power_var: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    soc_percent: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    voltage_volts: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+
+
+class OCPPMetadata(Base):
+    """Represents a snapshot of OCPP device metadata retrieved at a moment in time"""
+
+    __tablename__ = "ocpp_metadata"
+
+    ocpp_metadata_id: Mapped[int] = mapped_column(BIGINT, name="id", primary_key=True, autoincrement=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    max_voltage_volts: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    min_voltage_volts: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    max_power_watts: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    max_charge_rate_watts: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    max_discharge_rate_watts: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    set_grad_w: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+
+
 class Meter(Base):
     """Represents some form of third party power meter."""
 
@@ -32,7 +70,6 @@ class Meter(Base):
 
     # TODO: Meter connection details
 
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     meter_readings: Mapped[list["MeterReading"]] = relationship(
@@ -53,7 +90,7 @@ class MeterReading(Base):
         ),
     )
 
-    meter_reading_id: Mapped[int] = mapped_column(name="id", primary_key=True, autoincrement=True)
+    meter_reading_id: Mapped[int] = mapped_column(BIGINT, name="id", primary_key=True, autoincrement=True)
     meter_id: Mapped[int] = mapped_column(ForeignKey("meter.id"))  # Which meter is this reading for
 
     reading_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # When was the reading valid for?
@@ -113,7 +150,7 @@ class CSIPAusControl(Base):
 
     __tablename__ = "csipaus_control"
 
-    csipaus_control_id: Mapped[int] = mapped_column(name="id", primary_key=True, autoincrement=True)
+    csipaus_control_id: Mapped[int] = mapped_column(BIGINT, name="id", primary_key=True, autoincrement=True)
 
     primacy: Mapped[int] = mapped_column(INTEGER)  # Primacy of parent DERProgram
     mrid: Mapped[str] = mapped_column(String, unique=True)
@@ -157,8 +194,8 @@ class CSIPAusControlResponse(Base):
 
     __tablename__ = "csipaus_control_response"
 
-    csipaus_control_response_id: Mapped[int] = mapped_column(name="id", primary_key=True, autoincrement=True)
-    csipaus_control_id: Mapped[int] = mapped_column(ForeignKey("csipaus_control.id"), index=True)
+    csipaus_control_response_id: Mapped[int] = mapped_column(BIGINT, name="id", primary_key=True, autoincrement=True)
+    csipaus_control_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("csipaus_control.id"), index=True)
 
     response_status: Mapped[int] = mapped_column(INTEGER)
     end_device_mrid: Mapped[str] = mapped_column(String)

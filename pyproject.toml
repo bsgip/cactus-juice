@@ -43,6 +43,7 @@ dependencies = [
     "aiohttp>=3,<4",
     "pydantic_xml[lxml]>=2.11.7,<3",
     "cryptography",
+    "cactus-test-definitions"
 ]
 
 [project.optional-dependencies]

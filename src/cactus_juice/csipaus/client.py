@@ -1,22 +1,45 @@
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from http import HTTPMethod
 from typing import cast
 
+from cactus_test_definitions.csipaus import CSIPAusReadingLocation, CSIPAusReadingType
 from envoy_schema.server.schema.csip_aus.connection_point import ConnectionPointRequest
 from envoy_schema.server.schema.sep2.device_capability import DeviceCapabilityResponse
 from envoy_schema.server.schema.sep2.end_device import EndDeviceListResponse, EndDeviceRequest, EndDeviceResponse
+from envoy_schema.server.schema.sep2.metering import ReadingType
+from envoy_schema.server.schema.sep2.metering_mirror import (
+    MirrorMeterReading,
+    MirrorUsagePoint,
+    MirrorUsagePointList,
+    MirrorUsagePointRequest,
+)
 from envoy_schema.server.schema.sep2.time import TimeResponse
-from envoy_schema.server.schema.sep2.types import DeviceCategory
+from envoy_schema.server.schema.sep2.types import DeviceCategory, FlowDirectionType, ServiceKind
 
 from cactus_juice.csipaus.config import CSIPAusContext
+from cactus_juice.csipaus.mup import (
+    MirrorUsagePointMrids,
+    generate_mup_mrids,
+    generate_reading_type_values,
+    generate_role_flags,
+)
 from cactus_juice.csipaus.server import get_resource, paginate_list_resource_items, submit_resource
+from cactus_juice.db import DatabaseConnection
 
 logger = logging.getLogger(__name__)
 
 MIN_DATE = datetime(1000, 1, 1, tzinfo=UTC)  # We just want a TZ aware "minimum" date
 DEFAULT_POLL_RATE = timedelta(minutes=15)
+
+SUPPORTED_READING_TYPES = [
+    CSIPAusReadingType.ActivePowerAverage,
+    CSIPAusReadingType.VoltageSinglePhaseAverage,
+    CSIPAusReadingType.FrequencyAverage,
+]
+POW10_MULTIPLIER = 0
 
 
 @dataclass(slots=True)
@@ -28,6 +51,7 @@ class ClientState:
     It should allow (mostly) correct polling/posting timings"""
 
     context: CSIPAusContext
+    db: DatabaseConnection
 
     dcap_last_poll: datetime
     dcap_poll_rate: timedelta
@@ -38,8 +62,12 @@ class ClientState:
 
     mupl_last_poll: datetime  # MirrorUsagePointList
     mupl_poll_rate: timedelta  # MirrorUsagePointList
+    mupl_last_post: datetime  # MirrorUsagePointList
     mupl_post_rate: timedelta  # MirrorUsagePointList
     mupl_href: str | None
+    mup_href_by_location: dict[CSIPAusReadingLocation, str]
+    mup_device_mrids: MirrorUsagePointMrids
+    mup_site_mrids: MirrorUsagePointMrids
 
     fsal_last_poll: datetime  # FunctionSetAssignmentsList
     fsal_poll_rate: timedelta  # FunctionSetAssignmentsList
@@ -58,9 +86,23 @@ class ClientState:
     tpl_href: list[str]  # TariffProfileList href - We may have multiple lists via FSAs
 
     @staticmethod
-    def new_instance(context: CSIPAusContext) -> "ClientState":
+    def new_instance(context: CSIPAusContext, db: DatabaseConnection) -> "ClientState":
+
+        # prep the expected MUP mrids
+        mup_site_mrids = generate_mup_mrids(
+            CSIPAusReadingLocation.Site,
+            SUPPORTED_READING_TYPES,
+            context.client_pen,
+        )
+        mup_device_mrids = generate_mup_mrids(
+            CSIPAusReadingLocation.Device,
+            SUPPORTED_READING_TYPES,
+            context.client_pen,
+        )
+
         return ClientState(
             context=context,
+            db=db,
             dcap_last_poll=MIN_DATE,
             dcap_poll_rate=DEFAULT_POLL_RATE,
             edevl_last_poll=MIN_DATE,
@@ -68,8 +110,12 @@ class ClientState:
             edev_href=None,
             mupl_last_poll=MIN_DATE,
             mupl_poll_rate=DEFAULT_POLL_RATE,
+            mupl_last_post=MIN_DATE,
             mupl_post_rate=DEFAULT_POLL_RATE,
             mupl_href=None,
+            mup_href_by_location={},
+            mup_device_mrids=mup_device_mrids,
+            mup_site_mrids=mup_site_mrids,
             fsal_last_poll=MIN_DATE,
             fsal_poll_rate=DEFAULT_POLL_RATE,
             fsal_href=None,
@@ -85,19 +131,22 @@ class ClientState:
         )
 
 
-def match_end_device_on_lfdi_caseless(end_devices: list[EndDeviceResponse], lfdi: str) -> EndDeviceResponse | None:
-    """Does a very lightweight match on EndDevice.lfdi - returning the first EndDevice that matches or None."""
-    lfdi_folded = lfdi.casefold()
-    for edev in end_devices:
-        if edev.lFDI is None or edev.lFDI.casefold() != lfdi_folded:
+def first_matching_caseless[T](items: list[T], value: str, key: Callable[[T], str | None]) -> T | None:
+    """Does a case folded match on a string value extracted from each element in items - returning the first that
+    matches or None."""
+    value_folded = value.casefold()
+    for item in items:
+        compare_value = key(item)
+        if compare_value is None or compare_value.casefold() != value_folded:
             continue
 
-        return edev
+        return item
 
     return None
 
 
 async def poll_dcap(state: ClientState, now: datetime) -> None:
+    """polls DeviceCapability - updates links to EndDeviceList/MUPList"""
 
     logger.info(f"Polling DeviceCapability {state.context.dcap_path}")
     response = await get_resource(DeviceCapabilityResponse, state.context.http, state.context.dcap_path)
@@ -151,7 +200,7 @@ async def in_band_register(state: ClientState, end_device_list_href: str) -> End
 
 
 async def poll_end_device_list(state: ClientState, now: datetime) -> None:
-
+    """Polls EndDeviceList (if discovered) - ensures EndDevice existence, updates links to FSAs / DERs"""
     if state.edev_href is None:
         logger.info("No EndDeviceList discovered - unable to poll.")
         return
@@ -167,7 +216,9 @@ async def poll_end_device_list(state: ClientState, now: datetime) -> None:
     )
 
     # Look for our EndDevice - registering if required
-    existing_edev = match_end_device_on_lfdi_caseless(edevl_response.items, state.context.edev_lfdi)
+    existing_edev = first_matching_caseless(
+        edevl_response.items, state.context.edev_lfdi, lambda edev: cast(EndDeviceResponse, edev).lFDI
+    )
     if existing_edev is None:
         existing_edev = await in_band_register(state, state.edev_href)
 
@@ -183,3 +234,92 @@ async def poll_end_device_list(state: ClientState, now: datetime) -> None:
         state.derl_href = existing_edev.DERListLink.href
 
     state.edevl_last_poll = now
+
+
+async def create_location_mup(
+    state: ClientState, mup_list_href: str, location: CSIPAusReadingLocation, mrids: MirrorUsagePointMrids
+) -> str:
+    """Creates a MUP for the specified location, POST's it and returns the href"""
+
+    role_flags = generate_role_flags(location)
+
+    mmrs: list[MirrorMeterReading] = []
+    for rt, mmr_mrid in mrids.mmr_mrids.items():
+        uom, kind, dq = generate_reading_type_values(rt)
+
+        mmrs.append(
+            MirrorMeterReading(
+                mRID=mmr_mrid,
+                readingType=ReadingType(
+                    uom=uom,
+                    kind=kind,
+                    dataQualifier=dq,
+                    flowDirection=FlowDirectionType.FORWARD,
+                    powerOfTenMultiplier=POW10_MULTIPLIER,
+                ),
+            )
+        )
+
+    mup_href = await submit_resource(
+        state.context.http,
+        HTTPMethod.POST,
+        mup_list_href,
+        MirrorUsagePointRequest(
+            roleFlags=f"{int(role_flags):04X}",
+            deviceLFDI=state.context.edev_lfdi,
+            mRID=mrids.mup_mrid,
+            status=1,
+            mirrorMeterReadings=mmrs,
+            serviceCategoryKind=ServiceKind.ELECTRICITY,
+        ),
+    )
+
+    logger.info(f"Created MUP {mup_href} for {location} with mRID {mrids.mup_mrid} and {len(mmrs)} MMRs")
+    return mup_href
+
+
+async def poll_mup_list(state: ClientState, now: datetime) -> None:
+    """Polls the MirrorUsagePointList - ensures the existence of MUPs for the EndDevice"""
+
+    if state.mupl_href is None:
+        logger.info("No MirrorUsagePointList href discovered - unable to poll MUP list.")
+        return
+
+    if state.edev_href is None:
+        logger.info("No EndDevice registered - unable to poll MUP list.")
+        return
+
+    mups = await paginate_list_resource_items(
+        MirrorUsagePointList,
+        state.context.http,
+        state.mupl_href,
+        page_size=100,
+        item_callback=lambda mupl: cast(MirrorUsagePointList, mupl).mirrorUsagePoints,
+    )
+
+    # Ensure our site/device MUP exists
+    site_mup = first_matching_caseless(
+        mups.items, state.mup_site_mrids.mup_mrid, lambda mup: cast(MirrorUsagePoint, mup).mRID
+    )
+    if site_mup is None:
+        state.mup_href_by_location[CSIPAusReadingLocation.Site] = await create_location_mup(
+            state, state.mupl_href, CSIPAusReadingLocation.Site, state.mup_site_mrids
+        )
+    device_mup = first_matching_caseless(
+        mups.items, state.mup_device_mrids.mup_mrid, lambda mup: cast(MirrorUsagePoint, mup).mRID
+    )
+    if device_mup is None:
+        state.mup_href_by_location[CSIPAusReadingLocation.Device] = await create_location_mup(
+            state, state.mupl_href, CSIPAusReadingLocation.Device, state.mup_device_mrids
+        )
+
+    # Update state
+    if mups.poll_rate_seconds:
+        state.mupl_poll_rate = timedelta(seconds=mups.poll_rate_seconds)
+    else:
+        state.mupl_poll_rate = state.dcap_poll_rate  # Failover to dcap poll rate
+    state.mupl_last_poll = now
+
+
+async def post_mup_list(state: ClientState, now: datetime) -> None:
+    """POSTs the last postRate readings in a CSIP-Aus compatible form"""

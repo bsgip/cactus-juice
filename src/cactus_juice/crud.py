@@ -6,7 +6,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cactus_juice.csipaus.dto import HasDefaultValues
-from cactus_juice.model import CSIPAusControl, CSIPAusControlResponse, CSIPAusDefault
+from cactus_juice.model import CSIPAusControl, CSIPAusControlResponse, CSIPAusDefault, OCPPMetadata, OCPPReading
 
 DEFAULT_MAX_DATE = datetime(9999, 1, 1, tzinfo=UTC)
 
@@ -210,3 +210,33 @@ async def update_active_default(session: AsyncSession, now: datetime, values: Ha
             **{col: getattr(values, col) for col in default_value_columns},
         )
     )
+
+
+async def fetch_ocpp_readings_in_range(
+    session: AsyncSession, readings_from: datetime, readings_to: datetime, start: int = 0, limit: int = 500
+) -> Sequence[OCPPReading]:
+    """Fetches all OCPPReadings that exist in [readings_from, readings_to) (inclusive to exclusive).
+
+    Readings will be ordered by reading_start ASC"""
+
+    return (
+        (
+            await session.execute(
+                select(OCPPReading)
+                .where((OCPPReading.reading_start >= readings_from) & (OCPPReading.reading_start < readings_to))
+                .order_by(OCPPReading.reading_start, OCPPReading.ocpp_reading_id)
+                .offset(start)
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def fetch_ocpp_metadata(session: AsyncSession) -> OCPPMetadata | None:
+    """Fetches the latest OCPPMetadata or None if none has been registered yet"""
+
+    return (
+        await session.execute(select(OCPPMetadata).order_by(OCPPMetadata.created_at.desc()).limit(1))
+    ).scalar_one_or_none()

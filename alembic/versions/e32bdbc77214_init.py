@@ -1,8 +1,8 @@
 """init
 
-Revision ID: 2fcba2fe5534
+Revision ID: e32bdbc77214
 Revises:
-Create Date: 2026-09-04 17:29:49.144486
+Create Date: 2026-09-07 16:24:37.140506
 
 """
 
@@ -14,7 +14,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "2fcba2fe5534"
+revision: str = "e32bdbc77214"
 down_revision: str | Sequence[str] | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -35,12 +35,13 @@ def upgrade() -> None:
         sa.Column("dcap_uri", sa.String(), nullable=True),
         sa.Column("serca_pem", sa.LargeBinary(), nullable=True),
         sa.Column("verify_hostname", sa.Boolean(), server_default="TRUE", nullable=False),
+        sa.Column("verify_ssl", sa.Boolean(), server_default="TRUE", nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(op.f("ix_csipaus_config_created_at"), "csipaus_config", ["created_at"], unique=False)
     op.create_table(
         "csipaus_control",
-        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("id", sa.BIGINT(), autoincrement=True, nullable=False),
         sa.Column("primacy", sa.INTEGER(), nullable=False),
         sa.Column("mrid", sa.String(), nullable=False),
         sa.Column("duration_seconds", sa.INTEGER(), nullable=False),
@@ -98,14 +99,41 @@ def upgrade() -> None:
         "meter",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("name", sa.String(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_table(
+        "ocpp_metadata",
+        sa.Column("id", sa.BIGINT(), autoincrement=True, nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("max_voltage_volts", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("min_voltage_volts", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("max_power_watts", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("max_charge_rate_watts", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("max_discharge_rate_watts", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("set_grad_w", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(op.f("ix_ocpp_metadata_created_at"), "ocpp_metadata", ["created_at"], unique=False)
+    op.create_table(
+        "ocpp_reading",
+        sa.Column("id", sa.BIGINT(), autoincrement=True, nullable=False),
+        sa.Column("reading_start", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("frequency_hz", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("import_active_power_watts", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("export_active_power_watts", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("import_reactive_power_var", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("export_reactive_power_var", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("soc_percent", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("voltage_volts", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(op.f("ix_ocpp_reading_reading_start"), "ocpp_reading", ["reading_start"], unique=False)
+    op.create_table(
         "csipaus_control_response",
-        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column("csipaus_control_id", sa.Integer(), nullable=False),
+        sa.Column("id", sa.BIGINT(), autoincrement=True, nullable=False),
+        sa.Column("csipaus_control_id", sa.BIGINT(), nullable=False),
         sa.Column("response_status", sa.INTEGER(), nullable=False),
         sa.Column("end_device_mrid", sa.String(), nullable=False),
         sa.Column("not_before", sa.DateTime(timezone=True), nullable=False),
@@ -141,7 +169,7 @@ def upgrade() -> None:
     )
     op.create_table(
         "meter_reading",
-        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("id", sa.BIGINT(), autoincrement=True, nullable=False),
         sa.Column("meter_id", sa.Integer(), nullable=False),
         sa.Column("reading_start", sa.DateTime(timezone=True), nullable=False),
         sa.Column("active_power_watts", sa.INTEGER(), nullable=False),
@@ -167,6 +195,10 @@ def downgrade() -> None:
         "idx_unsent_responses", table_name="csipaus_control_response", postgresql_where=sa.text("sent_at IS NULL")
     )
     op.drop_table("csipaus_control_response")
+    op.drop_index(op.f("ix_ocpp_reading_reading_start"), table_name="ocpp_reading")
+    op.drop_table("ocpp_reading")
+    op.drop_index(op.f("ix_ocpp_metadata_created_at"), table_name="ocpp_metadata")
+    op.drop_table("ocpp_metadata")
     op.drop_table("meter")
     op.drop_table("csipaus_default")
     op.drop_index(op.f("ix_csipaus_control_finished_at"), table_name="csipaus_control")
