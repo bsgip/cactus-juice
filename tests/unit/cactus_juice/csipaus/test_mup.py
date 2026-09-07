@@ -1,4 +1,6 @@
 import re
+from datetime import UTC, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 from assertical.asserts.type import assert_dict_type
@@ -19,6 +21,8 @@ from cactus_juice.csipaus.mup import (
     generate_mup_mrids,
     generate_reading_type_values,
     generate_role_flags,
+    previous_post_period,
+    value_to_sep2,
 )
 from cactus_juice.error import BaseJuiceError
 
@@ -158,6 +162,116 @@ def test_generate_mmr_mrids_basic():
     assert result == result2
 
 
+@pytest.mark.parametrize(
+    "dt, post_rate, expected",
+    [
+        # Basic alignment - partway through a period rounds down to the boundary
+        (
+            datetime(2024, 3, 15, 13, 22, 33, tzinfo=UTC),
+            timedelta(minutes=5),
+            datetime(2024, 3, 15, 13, 20, 0, tzinfo=UTC),
+        ),
+        (
+            datetime(2024, 3, 15, 13, 22, 33, tzinfo=UTC),
+            timedelta(minutes=15),
+            datetime(2024, 3, 15, 13, 15, 0, tzinfo=UTC),
+        ),
+        (
+            datetime(2024, 3, 15, 13, 22, 33, tzinfo=UTC),
+            timedelta(hours=1),
+            datetime(2024, 3, 15, 13, 0, 0, tzinfo=UTC),
+        ),
+        # Sub-minute microseconds are also discarded
+        (
+            datetime(2024, 3, 15, 13, 20, 0, 500_000, tzinfo=UTC),
+            timedelta(minutes=5),
+            datetime(2024, 3, 15, 13, 20, 0, tzinfo=UTC),
+        ),
+        # Exactly on a boundary returns that same instant
+        (
+            datetime(2024, 3, 15, 13, 15, 0, tzinfo=UTC),
+            timedelta(minutes=15),
+            datetime(2024, 3, 15, 13, 15, 0, tzinfo=UTC),
+        ),
+        # Just before midnight with a large period aligns back to the prior boundary
+        (
+            datetime(2024, 3, 15, 23, 59, 59, tzinfo=UTC),
+            timedelta(hours=6),
+            datetime(2024, 3, 15, 18, 0, 0, tzinfo=UTC),
+        ),
+        # Exactly midnight returns midnight
+        (
+            datetime(2024, 3, 15, 0, 0, 0, tzinfo=UTC),
+            timedelta(minutes=5),
+            datetime(2024, 3, 15, 0, 0, 0, tzinfo=UTC),
+        ),
+        # A full day period always collapses to local midnight
+        (
+            datetime(2024, 3, 15, 17, 45, 12, tzinfo=UTC),
+            timedelta(days=1),
+            datetime(2024, 3, 15, 0, 0, 0, tzinfo=UTC),
+        ),
+        # Boundaries align to midnight in dt's own (non-UTC) timezone
+        (
+            datetime(2024, 3, 15, 13, 22, 33, tzinfo=timezone(timedelta(hours=10))),
+            timedelta(minutes=15),
+            datetime(2024, 3, 15, 13, 15, 0, tzinfo=timezone(timedelta(hours=10))),
+        ),
+    ],
+)
+def test_previous_post_period(dt: datetime, post_rate: timedelta, expected: datetime):
+    result = previous_post_period(dt, post_rate)
+
+    assert result == expected
+    assert result.tzinfo == dt.tzinfo, "tzinfo should be preserved"
+    assert result <= dt, "boundary is never in the future"
+
+
+def test_previous_post_period_named_timezone_midnight_alignment():
+    """Boundaries are aligned to local midnight of a named tz, not UTC midnight."""
+    tz = ZoneInfo("Australia/Brisbane")  # UTC+10, no DST
+    dt = datetime(2024, 6, 15, 0, 20, 0, tzinfo=tz)
+
+    result = previous_post_period(dt, timedelta(minutes=15))
+
+    assert result == datetime(2024, 6, 15, 0, 15, 0, tzinfo=tz)
+
+
+def test_previous_post_period_across_dst_boundary():
+    """Alignment is anchored to local midnight so it is unaffected by a DST transition earlier in the day."""
+    tz = ZoneInfo("Australia/Sydney")
+    # 2024-04-07 03:00 local, DST ends at 03:00 -> 02:00 that morning in Sydney
+    dt = datetime(2024, 4, 7, 13, 7, 0, tzinfo=tz)
+
+    result = previous_post_period(dt, timedelta(minutes=5))
+
+    assert result == datetime(2024, 4, 7, 13, 5, 0, tzinfo=tz)
+
+
+def test_previous_post_period_requires_timezone_aware():
+    with pytest.raises(ValueError):
+        previous_post_period(datetime(2024, 3, 15, 13, 22, 33), timedelta(minutes=5))
+
+
+@pytest.mark.parametrize("post_rate", [timedelta(0), timedelta(minutes=-5)])
+def test_previous_post_period_rejects_non_positive_rate(post_rate: timedelta):
+    with pytest.raises(ValueError):
+        previous_post_period(datetime(2024, 3, 15, 13, 22, 33, tzinfo=UTC), post_rate)
+
+
+@pytest.mark.parametrize(
+    "post_rate",
+    [
+        timedelta(minutes=7),  # does not divide 60
+        timedelta(hours=5),  # does not divide 24
+        timedelta(seconds=7),  # does not divide the day
+    ],
+)
+def test_previous_post_period_rejects_rate_not_dividing_day(post_rate: timedelta):
+    with pytest.raises(ValueError):
+        previous_post_period(datetime(2024, 3, 15, 13, 22, 33, tzinfo=UTC), post_rate)
+
+
 def test_generate_reading_type_values_fuzzy_match():
     """Test that all combinations of units and qualifiers exist and are consistent"""
 
@@ -190,3 +304,21 @@ def test_generate_reading_type_values_fuzzy_match():
             assert uom == expected_uom
 
             assert kind == KindType.POWER
+
+
+@pytest.mark.parametrize(
+    "v, pow10, expected",
+    [
+        (0, 0, 0),
+        (10.3, 0, 10),
+        (821.2, 1, 82),
+        (4731.3, 3, 4),
+        (4731.3, -1, 47313),
+        (4731.3, -2, 473130),
+    ],
+)
+def test_value_to_sep2(v: float, pow10: int, expected: int):
+    actual = value_to_sep2(v, pow10)
+    assert isinstance(actual, int)
+    assert actual == expected
+    assert value_to_sep2(-v, pow10) == -expected

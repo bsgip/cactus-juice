@@ -1,5 +1,6 @@
 import hashlib
 from dataclasses import dataclass
+from datetime import datetime, time, timedelta
 
 from cactus_test_definitions.csipaus import (
     CSIPAusReadingLocation,
@@ -119,3 +120,42 @@ def generate_role_flags(location: CSIPAusReadingLocation) -> RoleFlagsType:
 
         case _:
             raise BaseJuiceError(f"No CSIPAusReadingLocation mapping configured for {location}.")
+
+
+def previous_post_period(dt: datetime, post_rate: timedelta) -> datetime:
+    """
+    Return the most recent datetime that aligns to a "post rate period"
+    boundary, given a tz-aware datetime and a timedelta that evenly
+    divides 24 hours (e.g. 1 minute, 5 minutes, 15 minutes, 1 hour).
+
+    Boundaries are aligned to local midnight (00:00:00) of `dt`'s date,
+    in `dt`'s own timezone.
+
+    Example:
+        previous_post_period(dt=13:22:33, post_rate=5min) -> 13:20:00
+        previous_post_period(dt=13:22:33, post_rate=15min) -> 13:15:00
+    """
+    if dt.tzinfo is None:
+        raise ValueError("dt must be timezone-aware")
+
+    seconds_per_day = 24 * 60 * 60
+    rate_seconds = post_rate.total_seconds()
+
+    if rate_seconds <= 0:
+        raise ValueError("post_rate must be a positive timedelta")
+    if seconds_per_day % rate_seconds != 0:
+        raise ValueError("post_rate must evenly divide a 24 hour period")
+
+    # Midnight for the same calendar date, same tzinfo (avoids DST-shift
+    # issues that arise from subtracting a timedelta across a DST boundary).
+    midnight = datetime.combine(dt.date(), time.min, tzinfo=dt.tzinfo)
+
+    elapsed = (dt - midnight).total_seconds()
+    periods_elapsed = int(elapsed // rate_seconds)
+
+    return midnight + timedelta(seconds=periods_elapsed * rate_seconds)
+
+
+def value_to_sep2(value: float, pow10: int) -> int:
+    decimal_power = pow(10, -pow10)
+    return int(value * decimal_power)

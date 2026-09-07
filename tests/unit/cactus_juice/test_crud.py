@@ -14,13 +14,15 @@ from cactus_juice.crud import (
     fetch_active_default,
     fetch_controls_active_from,
     fetch_defaults_from,
+    fetch_ocpp_metadata,
+    fetch_ocpp_readings_in_range,
     fetch_unsent_control_responses,
     update_active_default,
     upsert_control_responses,
     upsert_controls,
 )
 from cactus_juice.csipaus.dto import DefaultValues
-from cactus_juice.model import CSIPAusControl, CSIPAusControlResponse, CSIPAusDefault
+from cactus_juice.model import CSIPAusControl, CSIPAusControlResponse, CSIPAusDefault, OCPPMetadata, OCPPReading
 
 DEFAULT_VALUE_COLUMNS = (
     "ramp_percent_max_second_hundredths",
@@ -566,6 +568,96 @@ async def test_update_active_default_no_commit(pg_base_config):
         assert (count_before + 1) == (
             await session.execute(select(func.count()).select_from(CSIPAusDefault))
         ).scalar_one()
+
+
+@pytest.mark.parametrize(
+    "readings_from, readings_to, start, limit, expected_ids",
+    [
+        # Whole history - ordered by reading_start ASC then id ASC (see base_config.sql)
+        (datetime.min, DEFAULT_MAX_DATE, 0, 99, [2, 4, 1, 6, 5, 3]),
+        (datetime(2026, 1, 1, tzinfo=UTC), DEFAULT_MAX_DATE, 0, 99, [2, 4, 1, 6, 5, 3]),
+        # readings_from is inclusive, readings_to is exclusive
+        (datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC), datetime(2026, 1, 1, 0, 15, 0, tzinfo=UTC), 0, 99, [4, 1, 6]),
+        (datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC), datetime(2026, 1, 1, 0, 20, 0, tzinfo=UTC), 0, 99, [2, 4, 1, 6, 5]),
+        # ids 1 & 6 share reading_start 00:10 -> id ASC tie-break
+        (datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC), datetime(2026, 1, 1, 0, 10, 1, tzinfo=UTC), 0, 99, [1, 6]),
+        # empty window (from == to)
+        (datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC), datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC), 0, 99, []),
+        # nothing in range
+        (datetime(2026, 1, 1, 1, 0, 0, tzinfo=UTC), DEFAULT_MAX_DATE, 0, 99, []),
+        # Paging over the full history
+        (datetime.min, DEFAULT_MAX_DATE, 1, 2, [4, 1]),
+        (datetime.min, DEFAULT_MAX_DATE, 2, 2, [1, 6]),
+        (datetime.min, DEFAULT_MAX_DATE, 4, 99, [5, 3]),
+    ],
+)
+async def test_fetch_ocpp_readings_in_range(
+    pg_base_config,
+    readings_from: datetime,
+    readings_to: datetime,
+    start: int,
+    limit: int,
+    expected_ids: list[int],
+):
+    async with generate_async_session(pg_base_config) as session:
+        actual = await fetch_ocpp_readings_in_range(
+            session, readings_from=readings_from, readings_to=readings_to, start=start, limit=limit
+        )
+        assert [e.ocpp_reading_id for e in actual] == expected_ids
+        assert_list_type(OCPPReading, actual, count=len(expected_ids))
+
+
+async def test_fetch_ocpp_readings_in_range_values(pg_base_config):
+    """The mapped columns round-trip from base_config.sql."""
+    async with generate_async_session(pg_base_config) as session:
+        actual = await fetch_ocpp_readings_in_range(
+            session,
+            readings_from=datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC),
+            readings_to=datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC),
+        )
+
+    assert len(actual) == 1
+    reading = actual[0]
+    assert reading.ocpp_reading_id == 2
+    assert reading.reading_start == datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+    assert reading.created_at == DEFAULT_CREATED_TIME
+    assert reading.frequency_hz == 201
+    assert reading.import_active_power_watts == 202
+    assert reading.export_active_power_watts == 203
+    assert reading.import_reactive_power_var == 204
+    assert reading.export_reactive_power_var == 205
+    assert reading.soc_percent == 206
+    assert reading.voltage_volts == 207
+
+
+async def test_fetch_ocpp_readings_in_range_empty_db(pg_empty_config):
+    async with generate_async_session(pg_empty_config) as session:
+        actual = await fetch_ocpp_readings_in_range(
+            session, readings_from=datetime.min, readings_to=DEFAULT_MAX_DATE
+        )
+    assert actual == []
+
+
+async def test_fetch_ocpp_metadata(pg_base_config):
+    """Returns the row with the most recent created_at (id 2), not simply the highest id."""
+    async with generate_async_session(pg_base_config) as session:
+        actual = await fetch_ocpp_metadata(session)
+
+    assert isinstance(actual, OCPPMetadata)
+    assert actual.ocpp_metadata_id == 2
+    assert actual.created_at == datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC)
+    assert actual.max_voltage_volts == 2001
+    assert actual.min_voltage_volts == 2002
+    assert actual.max_power_watts == 2003
+    assert actual.max_charge_rate_watts == 2004
+    assert actual.max_discharge_rate_watts == 2005
+    assert actual.set_grad_w == 2006
+
+
+async def test_fetch_ocpp_metadata_empty(pg_empty_config):
+    """No metadata registered yet -> None."""
+    async with generate_async_session(pg_empty_config) as session:
+        assert await fetch_ocpp_metadata(session) is None
 
 
 async def test_csipaus_default_rejects_overlapping_active_range(pg_base_config):

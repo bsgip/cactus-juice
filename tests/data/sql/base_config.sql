@@ -66,4 +66,49 @@ VALUES ('2026-01-01T00:05:00Z', '2026-01-01T00:10:00Z', '2000-01-01T00:00:00Z', 
 INSERT INTO csipaus_default (started_at, finished_at, created_at, ramp_percent_max_second_hundredths, connect, energize, import_limit_watts, export_limit_watts, load_limit_watts, generation_limit_watts, storage_target_watts)
 VALUES ('2026-01-01T00:10:00Z', '9999-1-1T00:00:00Z', '2000-01-01T00:00:00Z', 31, TRUE, TRUE, 3001, 3002, 3003, 3004, 3005);
 
-    
+
+-- ========= ocpp_reading ========
+--
+-- reading_start is deliberately NOT in id order so the ORDER BY (reading_start ASC, id ASC) is exercised.
+-- ids 1 & 6 share a reading_start so the id ASC tie-break matters.
+--
+-- id   reading_start
+--  2   00:00
+--  4   00:05
+--  1   00:10
+--  6   00:10
+--  5   00:15
+--  3   00:20
+--
+-- value columns for id N are numbered N01..N07
+INSERT INTO ocpp_reading (reading_start, created_at, frequency_hz, import_active_power_watts, export_active_power_watts, import_reactive_power_var, export_reactive_power_var, soc_percent, voltage_volts)
+VALUES ('2026-01-01T00:10:00Z', '2000-01-01T00:00:00Z', 101, 102, 103, 104, 105, 106, 107);
+INSERT INTO ocpp_reading (reading_start, created_at, frequency_hz, import_active_power_watts, export_active_power_watts, import_reactive_power_var, export_reactive_power_var, soc_percent, voltage_volts)
+VALUES ('2026-01-01T00:00:00Z', '2000-01-01T00:00:00Z', 201, 202, 203, 204, 205, 206, 207);
+INSERT INTO ocpp_reading (reading_start, created_at, frequency_hz, import_active_power_watts, export_active_power_watts, import_reactive_power_var, export_reactive_power_var, soc_percent, voltage_volts)
+VALUES ('2026-01-01T00:20:00Z', '2000-01-01T00:00:00Z', 301, 302, 303, 304, 305, 306, 307);
+INSERT INTO ocpp_reading (reading_start, created_at, frequency_hz, import_active_power_watts, export_active_power_watts, import_reactive_power_var, export_reactive_power_var, soc_percent, voltage_volts)
+VALUES ('2026-01-01T00:05:00Z', '2000-01-01T00:00:00Z', 401, 402, 403, 404, 405, 406, 407);
+INSERT INTO ocpp_reading (reading_start, created_at, frequency_hz, import_active_power_watts, export_active_power_watts, import_reactive_power_var, export_reactive_power_var, soc_percent, voltage_volts)
+VALUES ('2026-01-01T00:15:00Z', '2000-01-01T00:00:00Z', 501, 502, 503, 504, 505, 506, 507);
+INSERT INTO ocpp_reading (reading_start, created_at, frequency_hz, import_active_power_watts, export_active_power_watts, import_reactive_power_var, export_reactive_power_var, soc_percent, voltage_volts)
+VALUES ('2026-01-01T00:10:00Z', '2000-01-01T00:00:00Z', 601, 602, 603, 604, 605, 606, 607);
+
+
+-- ========= ocpp_metadata ========
+--
+-- created_at is deliberately NOT in id order - fetch_ocpp_metadata returns the most recent created_at, which is id 2.
+--
+-- id   created_at
+--  1   00:00
+--  3   00:05
+--  2   00:10  <- latest
+--
+-- value columns for id N are numbered N001..N006
+INSERT INTO ocpp_metadata (created_at, max_voltage_volts, min_voltage_volts, max_power_watts, max_charge_rate_watts, max_discharge_rate_watts, set_grad_w)
+VALUES ('2026-01-01T00:00:00Z', 1001, 1002, 1003, 1004, 1005, 1006);
+INSERT INTO ocpp_metadata (created_at, max_voltage_volts, min_voltage_volts, max_power_watts, max_charge_rate_watts, max_discharge_rate_watts, set_grad_w)
+VALUES ('2026-01-01T00:10:00Z', 2001, 2002, 2003, 2004, 2005, 2006);
+INSERT INTO ocpp_metadata (created_at, max_voltage_volts, min_voltage_volts, max_power_watts, max_charge_rate_watts, max_discharge_rate_watts, set_grad_w)
+VALUES ('2026-01-01T00:05:00Z', 3001, 3002, 3003, 3004, 3005, 3006);
+
