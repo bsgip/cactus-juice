@@ -1,3 +1,4 @@
+import hashlib
 import os
 import ssl
 import tempfile
@@ -10,6 +11,7 @@ from ssl import SSLContext
 
 from aiohttp import ClientSession, TCPConnector
 
+from cactus_juice.csipaus.sep2 import convert_lfdi_to_sfdi, lfdi_from_cert_bytes
 from cactus_juice.error import ConfigError
 from cactus_juice.model import CSIPAusConfig
 
@@ -28,9 +30,15 @@ class CSIPAusContext:
 
     http: HttpContext
 
-    is_aggregator_client: bool
+    is_aggregator_client: bool  # True - aggregator client, False - device client
     nmi: str | None
     client_pen: int
+
+    client_lfdi: str  # The LFDI of the client's certificate
+    client_sfdi: int  # The SFDI of the client's certificate
+
+    edev_lfdi: str  # The EndDevice LFDI that this client will manage. Same as client_lfdi for device client
+    edev_sfdi: int  # The EndDevice SFDI that this client will manage. Same as client_sfdi for device client
 
     dcap_path: str  # The DeviceCapability path of the server - will be relative to base_uri in http.session
 
@@ -83,6 +91,13 @@ def build_dcap_parts(dcap_uri: str) -> tuple[str, str]:
     return (f"{dcap_scheme}://{dcap_host}/", dcap_path)
 
 
+def generate_aggregator_lfdi(nmi: str | None, pen: int) -> str:
+    """Generates a "unique" valid LFDI that can represent an EndDevice for an aggregator client"""
+
+    hash = hashlib.md5(data=b"" if nmi is None else nmi.encode(), usedforsecurity=False)
+    return hash.hexdigest().upper()[:32] + f"{pen:08}"
+
+
 def build_csipaus_context(config: CSIPAusConfig) -> CSIPAusContext:
     """Builds a CSIPAusContext from the specified config entries. Raises ConfigError if there are issues / missing
     elements in the supplied config. Responsibility for cleaning up the allocated SSLContext falls to the caller of
@@ -95,6 +110,19 @@ def build_csipaus_context(config: CSIPAusConfig) -> CSIPAusContext:
 
     if config.certificate_pem is None or config.key_pem is None:
         raise ConfigError("Missing client key/certificate data - cannot create CSIPAusContext")
+
+    try:
+        client_pen = config.client_pen or 1
+        client_lfdi = lfdi_from_cert_bytes(config.certificate_pem)
+        client_sfdi = convert_lfdi_to_sfdi(client_lfdi)
+        if config.is_aggregator:
+            edev_lfdi = generate_aggregator_lfdi(config.nmi, client_pen)
+            edev_sfdi = convert_lfdi_to_sfdi(edev_lfdi)
+        else:
+            edev_lfdi = client_lfdi
+            edev_sfdi = client_sfdi
+    except Exception as exc:
+        raise ConfigError("Failure extracting LFDI/SFDI from client certificate data.") from exc
 
     ssl_context = SSLContext(ssl.PROTOCOL_TLSv1_2)  # TLS 1.2 required by 2030.5
 
@@ -130,7 +158,11 @@ def build_csipaus_context(config: CSIPAusConfig) -> CSIPAusContext:
             session=ClientSession(base_url=base_uri, connector=TCPConnector(ssl=ssl_context)), user_agent="cactus-juice"
         ),
         is_aggregator_client=config.is_aggregator,
-        nmi=config.nmi,
-        client_pen=config.client_pen or 1,
         dcap_path=dcap_path,
+        nmi=config.nmi,
+        client_pen=client_pen,
+        client_lfdi=client_lfdi,
+        client_sfdi=client_sfdi,
+        edev_lfdi=edev_lfdi,
+        edev_sfdi=edev_sfdi,
     )

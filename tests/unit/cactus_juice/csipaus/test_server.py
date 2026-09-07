@@ -226,10 +226,11 @@ async def test_paginate_list_resource_items(aiohttp_client):
         )
 
     # Assert - contents of response
-    assert_list_type(EndDeviceResponse, result, count=3)
-    assert result[0].href == "/envoy-svc-static-36/edev/0"
-    assert result[1].href == "/envoy-svc-static-36/edev/1"
-    assert result[2].href == "/envoy-svc-static-36/edev/2"
+    assert_list_type(EndDeviceResponse, result.items, count=3)
+    assert result.items[0].href == "/envoy-svc-static-36/edev/0"
+    assert result.items[1].href == "/envoy-svc-static-36/edev/1"
+    assert result.items[2].href == "/envoy-svc-static-36/edev/2"
+    assert result.poll_rate_seconds == 60
 
 
 async def test_paginate_list_resource_items_handle_failure(aiohttp_client):
@@ -275,7 +276,8 @@ async def test_paginate_list_resource_items_empty_list(aiohttp_client):
         )
 
     # Assert - contents of response
-    assert_list_type(EndDeviceResponse, result, count=0)
+    assert_list_type(EndDeviceResponse, result.items, count=0)
+    assert result.poll_rate_seconds == 60
 
 
 async def test_paginate_list_resource_items_too_many_requests(aiohttp_client):
@@ -336,7 +338,7 @@ async def test_fetch_list_page(aiohttp_client):
         start = 5
         limit = 10
 
-        items, all_attribute = await fetch_list_page(
+        items, all_attribute, poll_rate_attribute = await fetch_list_page(
             EndDeviceListResponse,
             context,
             "/foo/bar",
@@ -350,6 +352,7 @@ async def test_fetch_list_page(aiohttp_client):
     assert items[0].href == "/envoy-svc-static-36/edev/0"
     assert items[1].href == "/envoy-svc-static-36/edev/1"
     assert all_attribute == 3
+    assert poll_rate_attribute == 60
 
 
 @mock.patch("cactus_juice.csipaus.server.asyncio.sleep")

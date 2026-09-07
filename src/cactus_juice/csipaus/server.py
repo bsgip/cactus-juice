@@ -18,6 +18,12 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
+class PaginationResponse[T: Resource]:
+    items: list[T]
+    poll_rate_seconds: int | None  # The pollRate on the parent list (if any)
+
+
+@dataclass(frozen=True, slots=True)
 class ServerResponse:
     """Represents a response from the utility server in response to a particular request"""
 
@@ -201,7 +207,7 @@ async def paginate_list_resource_items[ListT: List | SubscribableList, ChildT: R
     page_size: int,
     item_callback: Callable[[ListT], list[ChildT] | None],
     max_pages_requested: int = 20,
-) -> list[ChildT]:
+) -> PaginationResponse[ChildT]:
     """Helper function for paginating through an entire list object (eg EndDeviceList) over multiple requests and
     returning the resulting child items (eg EndDevice) as a single list.
 
@@ -215,12 +221,16 @@ async def paginate_list_resource_items[ListT: List | SubscribableList, ChildT: R
     pages_requested = 0
     start = 0
     all_items: list[ChildT] = []
+    poll_rate_seconds: int | None = None
 
     while True:
-        latest_items, received_all = await fetch_list_page(
+        latest_items, received_all, received_poll_rate = await fetch_list_page(
             list_type, context, list_href, start, page_size, item_callback
         )
         all_items.extend(latest_items)
+
+        if received_poll_rate is not None:
+            poll_rate_seconds = received_poll_rate
 
         # Prepare next page
         # This is deliberately over paginating in order to catch any odd server behaviour
@@ -235,7 +245,7 @@ async def paginate_list_resource_items[ListT: List | SubscribableList, ChildT: R
                 f"Paginating {list_href} exceeded max pages {max_pages_requested} at page size {page_size}."
             )
 
-    return all_items
+    return PaginationResponse(all_items, poll_rate_seconds)
 
 
 async def fetch_list_page[ListT: List | SubscribableList, ChildT: Resource](
@@ -245,12 +255,12 @@ async def fetch_list_page[ListT: List | SubscribableList, ChildT: Resource](
     start: int,
     limit: int,
     item_callback: Callable[[ListT], list[ChildT] | None],
-) -> tuple[list[ChildT], int | None]:
+) -> tuple[list[ChildT], int | None, int | None]:
     """
     Fetch a single page of a list resource and extract items with validation.
 
     Returns:
-        tuple of (items, all_attribute)
+        tuple of (items, all_attribute, pollRate_attribute)
     """
     page_href = list_href + build_paging_params(start=start, limit=limit)
     latest_list = await get_resource(list_type, context, page_href)
@@ -260,5 +270,6 @@ async def fetch_list_page[ListT: List | SubscribableList, ChildT: Resource](
 
     # Extract and validate metadata
     received_all: int | None = getattr(latest_list, "all_", None)
+    received_poll_rate: int | None = getattr(latest_list, "pollRate", None)
 
-    return latest_items, received_all
+    return latest_items, received_all, received_poll_rate
