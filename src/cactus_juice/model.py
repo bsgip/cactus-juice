@@ -12,7 +12,6 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
-    null,
     text,
 )
 from sqlalchemy.dialects.postgresql import TSTZRANGE, ExcludeConstraint

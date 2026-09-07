@@ -1,12 +1,19 @@
 import os
 import subprocess
 from collections.abc import Generator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import psycopg
 import pytest
 from alembic.config import Config
 from assertical.fixtures.environment import environment_snapshot
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
+from cryptography.x509 import Certificate
+from cryptography.x509.oid import NameOID
 from psycopg import Connection
 from pytest_postgresql.executors import PostgreSQLExecutor
 from pytest_postgresql.janitor import DatabaseJanitor
@@ -153,3 +160,97 @@ def pg_base_config(pg_empty_config):
 
     execute_test_sql(pg_empty_config, sql)
     yield pg_empty_config
+
+
+@pytest.fixture(scope="session")
+def serca_key() -> RSAPrivateKey:
+    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+@pytest.fixture(scope="session")
+def serca_cert(serca_key: RSAPrivateKey) -> Certificate:
+    subject = issuer = x509.Name(
+        [
+            x509.NameAttribute(NameOID.COUNTRY_NAME, "AU"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Australian National University"),
+            x509.NameAttribute(NameOID.COMMON_NAME, "IEEE 2030.5 Root"),
+        ]
+    )
+
+    return (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(serca_key.public_key())
+        .serial_number(1)
+        .not_valid_before(datetime.now(UTC))
+        .not_valid_after(datetime.now(UTC) + timedelta(hours=10))
+        .add_extension(
+            x509.BasicConstraints(ca=True, path_length=1),
+            critical=True,
+        )
+        .sign(private_key=serca_key, algorithm=hashes.SHA256())
+    )
+
+
+@pytest.fixture(scope="session")
+def client_key() -> RSAPrivateKey:
+    """Returns x509 client private key"""
+    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+@pytest.fixture(scope="session")
+def client_cert(serca_key: RSAPrivateKey, serca_cert: Certificate, client_key: RSAPrivateKey) -> Certificate:
+    """Returns x509 client cert signed by serca"""
+    subject = x509.Name(
+        [
+            x509.NameAttribute(NameOID.COUNTRY_NAME, "AU"),
+            x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "ACT"),
+            x509.NameAttribute(NameOID.LOCALITY_NAME, "Canberra"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Australian National University"),
+            x509.NameAttribute(NameOID.COMMON_NAME, "Test Cert"),
+        ]
+    )
+
+    return (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(serca_cert.subject)
+        .public_key(client_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.now(UTC))
+        .not_valid_after(datetime.now(UTC) + timedelta(hours=1))
+        .add_extension(
+            x509.BasicConstraints(ca=False, path_length=None),
+            critical=True,
+        )
+        .sign(private_key=serca_key, algorithm=hashes.SHA256())
+    )
+
+
+@pytest.fixture(scope="session")
+def serca_cert_bytes(serca_cert: Certificate) -> bytes:
+    return serca_cert.public_bytes(serialization.Encoding.PEM)
+
+
+@pytest.fixture(scope="session")
+def serca_key_bytes(serca_key: RSAPrivateKey) -> bytes:
+    return serca_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,  # PKCS#1 format
+        encryption_algorithm=serialization.NoEncryption(),  # No password
+    )
+
+
+@pytest.fixture(scope="session")
+def client_cert_bytes(client_cert: Certificate) -> bytes:
+    return client_cert.public_bytes(serialization.Encoding.PEM)
+
+
+@pytest.fixture(scope="session")
+def client_key_bytes(client_key: RSAPrivateKey) -> bytes:
+    return client_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,  # PKCS#1 format
+        encryption_algorithm=serialization.NoEncryption(),  # No password
+    )

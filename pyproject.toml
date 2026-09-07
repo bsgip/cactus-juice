@@ -2,8 +2,9 @@
 [tool.pytest.ini_options]
 pythonpath = ["src/"]
 testpaths = "tests"
-
-
+filterwarnings = [
+    "ignore:ssl.PROTOCOL_TLSv1_2 is deprecated:DeprecationWarning",
+]
 
 [tool.bandit]
 exclude_dirs = ["tests"]
@@ -41,6 +42,7 @@ dependencies = [
     "envoy-schema>=2,<3",
     "aiohttp>=3,<4",
     "pydantic_xml[lxml]>=2.11.7,<3",
+    "cryptography",
 ]
 
 [project.optional-dependencies]
