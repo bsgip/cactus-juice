@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from assertical.asserts.generator import assert_class_instance_equality
@@ -15,15 +16,28 @@ from cactus_juice.crud import (
     fetch_controls_active_from,
     fetch_controls_with_mrids,
     fetch_defaults_from,
+    fetch_dynamic_prices_active_from,
+    fetch_dynamic_prices_with_mrids,
     fetch_ocpp_metadata,
     fetch_ocpp_readings_in_range,
     fetch_unsent_control_responses,
+    fetch_unsent_dynamic_price_responses,
     update_active_default,
     upsert_control_responses,
     upsert_controls,
+    upsert_dynamic_price_responses,
+    upsert_dynamic_prices,
 )
 from cactus_juice.csipaus.dto import DefaultValues
-from cactus_juice.model import CSIPAusControl, CSIPAusControlResponse, CSIPAusDefault, OCPPMetadata, OCPPReading
+from cactus_juice.model import (
+    CSIPAusControl,
+    CSIPAusControlResponse,
+    CSIPAusDefault,
+    CSIPAusDynamicPrice,
+    CSIPAusDynamicPriceResponse,
+    OCPPMetadata,
+    OCPPReading,
+)
 
 DEFAULT_VALUE_COLUMNS = (
     "ramp_percent_max_second_hundredths",
@@ -472,6 +486,435 @@ async def test_fetch_unsent_control_responses_include_control(pg_base_config):
             assert response.control.csipaus_control_id == response.csipaus_control_id
             assert response.control.csipaus_control_id == expected_control_ids[response.csipaus_control_response_id]
             assert response.control.mrid == expected_mrids[response.csipaus_control_id]
+
+
+# ========================= CSIPAusDynamicPrice / CSIPAusDynamicPriceResponse =========================
+#
+# These mirror the CSIPAusControl tests above - base_config.sql seeds csipaus_dynamic_price ids 1..7 with
+# mrids '1111'..'7777' laid out the same way as csipaus_control (there is no superseded_at on this entity so
+# #7 is cancelled instead of superseded).
+
+
+@pytest.mark.parametrize(
+    "mrids, start, limit, expected_ids",
+    [
+        # base_config.sql seeds ids 1..7 with mrids '1111'..'7777'
+        (["1111", "3333", "7777"], 0, 99, [1, 3, 7]),
+        (["7777", "3333", "1111"], 0, 99, [1, 3, 7]),  # result order follows the PK, not the argument order
+        (["3333", "3333", "3333"], 0, 99, [3]),  # duplicates collapse
+        (["1111"], 0, 99, [1]),
+        ([], 0, 99, []),  # empty iterable -> empty result, no error
+        (["does-not-exist"], 0, 99, []),  # unknown mrid -> empty result
+        (["1111", "no", "4444", "5555"], 0, 99, [1, 4, 5]),  # unknown mrids simply ignored
+        (["1111", "2222", "3333", "4444"], 1, 2, [2, 3]),  # paging
+        (["1111", "2222", "3333", "4444"], 2, 99, [3, 4]),
+        (("1111", "4444"), 0, 99, [1, 4]),  # any Iterable[str], not just a list
+    ],
+)
+async def test_fetch_dynamic_prices_with_mrids(pg_base_config, mrids, start: int, limit: int, expected_ids: list[int]):
+    async with generate_async_session(pg_base_config) as session:
+        actual = await fetch_dynamic_prices_with_mrids(session, mrids, start=start, limit=limit)
+        assert [e.csipaus_dynamic_price_id for e in actual] == expected_ids
+        assert_list_type(CSIPAusDynamicPrice, actual, count=len(expected_ids))
+
+
+async def test_fetch_dynamic_prices_with_mrids_empty_db(pg_empty_config):
+    async with generate_async_session(pg_empty_config) as session:
+        actual = await fetch_dynamic_prices_with_mrids(session, ["1111", "2222"])
+    assert actual == []
+
+
+@pytest.mark.parametrize(
+    "epoch, start, limit, expected_ids",
+    [
+        (datetime.min, 0, 99, [1, 4, 5, 6, 7, 2, 3]),
+        (datetime(2026, 1, 1, tzinfo=UTC), 0, 99, [1, 4, 5, 6, 7, 2, 3]),
+        (datetime.min, 1, 2, [4, 5]),  # Paging
+        (datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC), 0, 99, [4, 5, 7, 2, 3]),
+        (datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC), 0, 99, [4, 5, 3]),
+        (datetime(2026, 1, 1, 0, 15, 0, tzinfo=UTC), 0, 99, []),
+    ],
+)
+async def test_fetch_dynamic_prices_active_from(
+    pg_base_config, epoch: datetime, start: int, limit: int, expected_ids: list[int]
+):
+    async with generate_async_session(pg_base_config) as session:
+        actual = await fetch_dynamic_prices_active_from(session, epoch=epoch, start=start, limit=limit)
+        assert [e.csipaus_dynamic_price_id for e in actual] == expected_ids
+        assert_list_type(CSIPAusDynamicPrice, actual, count=len(expected_ids))
+
+
+async def test_upsert_dynamic_prices_no_commit(pg_base_config):
+    async with generate_async_session(pg_base_config) as session:
+        count_before = (await session.execute(select(func.count()).select_from(CSIPAusDynamicPrice))).scalar_one()
+
+    # No explicit commit/rollback
+    async with generate_async_session(pg_base_config) as session:
+        await upsert_dynamic_prices(session, [generate_class_instance(CSIPAusDynamicPrice, seed=101)])
+
+    async with generate_async_session(pg_base_config) as session:
+        assert (
+            count_before == (await session.execute(select(func.count()).select_from(CSIPAusDynamicPrice))).scalar_one()
+        )
+
+    # Explicit rollback
+    async with generate_async_session(pg_base_config) as session:
+        await upsert_dynamic_prices(session, [generate_class_instance(CSIPAusDynamicPrice, seed=101)])
+        await session.rollback()
+
+    async with generate_async_session(pg_base_config) as session:
+        assert (
+            count_before == (await session.execute(select(func.count()).select_from(CSIPAusDynamicPrice))).scalar_one()
+        )
+
+    # Will stick on commit
+    async with generate_async_session(pg_base_config) as session:
+        await upsert_dynamic_prices(session, [generate_class_instance(CSIPAusDynamicPrice, seed=101)])
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        assert (count_before + 1) == (
+            await session.execute(select(func.count()).select_from(CSIPAusDynamicPrice))
+        ).scalar_one()
+
+
+async def test_upsert_dynamic_prices_empty(pg_base_config):
+    async with generate_async_session(pg_base_config) as session:
+        count_before = (await session.execute(select(func.count()).select_from(CSIPAusDynamicPrice))).scalar_one()
+        await upsert_dynamic_prices(session, [])
+        assert (
+            count_before == (await session.execute(select(func.count()).select_from(CSIPAusDynamicPrice))).scalar_one()
+        )
+        await session.commit()
+
+
+async def test_upsert_dynamic_prices(pg_base_config):
+    """Covers the three docstring behaviours in one pass:
+    - a brand new mrid is inserted verbatim
+    - on an mrid conflict ONLY cancelled_at may change, every other column is left alone
+    - cancelled_at only moves from NULL -> value, an already-set value is never overwritten
+    """
+    # Existing cancelled time seeded by base_config.sql for the price we exercise below
+    BASE_6666_CANCELLED_AT = datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC)
+
+    # Fresh value fed in via the upsert
+    NEW_CANCELLED_AT = datetime(2026, 6, 1, 0, 0, 0, tzinfo=UTC)
+
+    new_price = generate_class_instance(
+        CSIPAusDynamicPrice, seed=101, mrid="brand-new-mrid", cancelled_at=NEW_CANCELLED_AT
+    )
+
+    # mrid 1111 (id 1): cancelled_at currently NULL -> should take the new value, while the (deliberately
+    # different) primacy/duration/price_kwh must be ignored.
+    conflict_open = generate_class_instance(
+        CSIPAusDynamicPrice,
+        seed=202,
+        mrid="1111",
+        cancelled_at=NEW_CANCELLED_AT,
+    )
+
+    # mrid 6666 (id 6): cancelled_at already set -> keep it
+    conflict_cancelled = generate_class_instance(
+        CSIPAusDynamicPrice,
+        seed=303,
+        mrid="6666",
+        cancelled_at=NEW_CANCELLED_AT,
+    )
+
+    # mrid 2222 (id 2): cancelled_at NULL in and out -> nothing to do, must not raise and must not touch
+    # other columns
+    conflict_noop = generate_class_instance(
+        CSIPAusDynamicPrice,
+        seed=505,
+        mrid="2222",
+        cancelled_at=None,
+    )
+
+    # Act
+    async with generate_async_session(pg_base_config) as session:
+        await upsert_dynamic_prices(
+            session,
+            [
+                clone_class_instance(e)  # Insert clones - allows us to keep the original instances out of the session
+                for e in [new_price, conflict_open, conflict_cancelled, conflict_noop]
+            ],
+        )
+        await session.commit()
+
+    # Assert
+    async with generate_async_session(pg_base_config) as session:
+        rows = (await session.execute(select(CSIPAusDynamicPrice))).scalars().all()
+        by_mrid = {r.mrid: r for r in rows}
+
+    # Nothing deleted, exactly one row added
+    assert len(rows) == 8
+
+    # New row inserted verbatim
+    inserted = by_mrid["brand-new-mrid"]
+    assert_class_instance_equality(
+        CSIPAusDynamicPrice,
+        new_price,
+        inserted,
+        ignored_properties={"csipaus_dynamic_price_id", "created_at", "finished_at"},
+    )
+    assert_nowish(inserted.created_at)
+    assert inserted.finished_at == inserted.started_at + timedelta(seconds=inserted.duration_seconds)
+
+    # mrid 1111: cancelled_at filled from NULL, everything else untouched
+    open_row = by_mrid["1111"]
+    assert open_row.csipaus_dynamic_price_id == 1
+    assert open_row.created_at == DEFAULT_CREATED_TIME, "Unchanged"
+    assert open_row.cancelled_at == conflict_open.cancelled_at
+    assert open_row.primacy == 1, "Unchanged"
+    assert open_row.price_kwh == Decimal("1.0001"), "Unchanged"
+
+    # mrid 6666: existing cancelled_at kept
+    cancelled_row = by_mrid["6666"]
+    assert cancelled_row.cancelled_at == BASE_6666_CANCELLED_AT
+    assert cancelled_row.created_at == DEFAULT_CREATED_TIME, "Unchanged"
+    assert cancelled_row.price_kwh == Decimal("6.0006"), "Unchanged"
+
+    # mrid 2222: untouched
+    noop_row = by_mrid["2222"]
+    assert noop_row.cancelled_at is None
+    assert noop_row.primacy == 1
+    assert noop_row.price_kwh == Decimal("2.0002"), "Unchanged"
+
+
+async def test_upsert_dynamic_price_responses_empty(pg_base_config):
+    async with generate_async_session(pg_base_config) as session:
+        count_before = (
+            await session.execute(select(func.count()).select_from(CSIPAusDynamicPriceResponse))
+        ).scalar_one()
+        await upsert_dynamic_price_responses(session, [])
+        assert (
+            count_before
+            == (await session.execute(select(func.count()).select_from(CSIPAusDynamicPriceResponse))).scalar_one()
+        )
+        await session.commit()
+
+
+async def test_upsert_dynamic_price_responses_no_commit(pg_base_config):
+    """upsert_dynamic_price_responses must never commit/rollback on its own - the caller owns the transaction."""
+
+    async with generate_async_session(pg_base_config) as session:
+        count_before = (
+            await session.execute(select(func.count()).select_from(CSIPAusDynamicPriceResponse))
+        ).scalar_one()
+
+    # No explicit commit/rollback
+    async with generate_async_session(pg_base_config) as session:
+        await upsert_dynamic_price_responses(
+            session,
+            [
+                generate_class_instance(
+                    CSIPAusDynamicPriceResponse,
+                    seed=101,
+                    csipaus_dynamic_price_id=2,
+                    end_device_lfdi="brand-new-device",
+                    sent_at=None,
+                )
+            ],
+        )
+
+    async with generate_async_session(pg_base_config) as session:
+        assert (
+            count_before
+            == (await session.execute(select(func.count()).select_from(CSIPAusDynamicPriceResponse))).scalar_one()
+        )
+
+    # Explicit rollback
+    async with generate_async_session(pg_base_config) as session:
+        await upsert_dynamic_price_responses(
+            session,
+            [
+                generate_class_instance(
+                    CSIPAusDynamicPriceResponse,
+                    seed=101,
+                    csipaus_dynamic_price_id=2,
+                    end_device_lfdi="brand-new-device",
+                    sent_at=None,
+                )
+            ],
+        )
+        await session.rollback()
+
+    async with generate_async_session(pg_base_config) as session:
+        assert (
+            count_before
+            == (await session.execute(select(func.count()).select_from(CSIPAusDynamicPriceResponse))).scalar_one()
+        )
+
+    # Will stick on commit
+    async with generate_async_session(pg_base_config) as session:
+        await upsert_dynamic_price_responses(
+            session,
+            [
+                generate_class_instance(
+                    CSIPAusDynamicPriceResponse,
+                    seed=101,
+                    csipaus_dynamic_price_id=2,
+                    end_device_lfdi="brand-new-device",
+                    sent_at=None,
+                )
+            ],
+        )
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        assert (count_before + 1) == (
+            await session.execute(select(func.count()).select_from(CSIPAusDynamicPriceResponse))
+        ).scalar_one()
+
+
+@pytest.mark.parametrize("optional_is_none", [True, False])
+async def test_upsert_dynamic_price_responses(pg_base_config, optional_is_none: bool):
+    """Ensures upsert_dynamic_price_responses can insert, update (sent_at) and not update (sent_at already set)"""
+
+    # Arrange
+    async with generate_async_session(pg_base_config) as session:
+        count_before = (
+            await session.execute(select(func.count()).select_from(CSIPAusDynamicPriceResponse))
+        ).scalar_one()
+
+    new_response_1 = generate_class_instance(
+        CSIPAusDynamicPriceResponse,
+        seed=101,
+        csipaus_dynamic_price_id=1,
+        end_device_lfdi="aaa",
+        optional_is_none=not optional_is_none,
+    )
+    new_response_2 = generate_class_instance(
+        CSIPAusDynamicPriceResponse,
+        seed=202,
+        optional_is_none=optional_is_none,
+        csipaus_dynamic_price_id=1,
+        end_device_lfdi="aaa",
+    )
+
+    # existing row is unsent -> sent_at takes the new value, everything else is left alone
+    # Conflicts with #2
+    conflict_2 = generate_class_instance(
+        CSIPAusDynamicPriceResponse,
+        seed=303,
+        optional_is_none=optional_is_none,
+        csipaus_dynamic_price_id=1,
+        response_status=2,
+        end_device_lfdi="aaa",
+    )
+
+    # existing row has already been sent -> the whole row must be left untouched
+    # Conflicts with #5
+    conflict_5 = generate_class_instance(
+        CSIPAusDynamicPriceResponse,
+        seed=404,
+        optional_is_none=optional_is_none,
+        csipaus_dynamic_price_id=3,
+        response_status=1,
+        end_device_lfdi="ccc",
+    )
+
+    # Act - insert clones so the originals stay detached from the session
+    async with generate_async_session(pg_base_config) as session:
+        await upsert_dynamic_price_responses(
+            session, [clone_class_instance(e) for e in [new_response_1, new_response_2, conflict_2, conflict_5]]
+        )
+        await session.commit()
+
+    # Assert
+    async with generate_async_session(pg_base_config) as session:
+        rows = (await session.execute(select(CSIPAusDynamicPriceResponse))).scalars().all()
+
+    assert len(rows) == count_before + 2
+    by_key = {(r.csipaus_dynamic_price_id, r.end_device_lfdi, r.response_status): r for r in rows}
+
+    # brand new tuple inserted verbatim
+    inserted_1 = by_key[
+        (new_response_1.csipaus_dynamic_price_id, new_response_1.end_device_lfdi, new_response_1.response_status)
+    ]
+    assert_class_instance_equality(
+        CSIPAusDynamicPriceResponse,
+        new_response_1,
+        inserted_1,
+        ignored_properties={"csipaus_dynamic_price_response_id", "created_at"},
+    )
+    assert_nowish(inserted_1.created_at)
+    inserted_2 = by_key[
+        (new_response_2.csipaus_dynamic_price_id, new_response_2.end_device_lfdi, new_response_2.response_status)
+    ]
+    assert_class_instance_equality(
+        CSIPAusDynamicPriceResponse,
+        new_response_2,
+        inserted_2,
+        ignored_properties={"csipaus_dynamic_price_response_id", "created_at"},
+    )
+    assert_nowish(inserted_2.created_at)
+
+    # unsent conflict: sent_at moved, every other column untouched
+    unsent_row = by_key[(conflict_2.csipaus_dynamic_price_id, conflict_2.end_device_lfdi, conflict_2.response_status)]
+    assert unsent_row.csipaus_dynamic_price_response_id == 2
+    assert unsent_row.sent_at == conflict_2.sent_at, "This is updated"
+    assert unsent_row.created_at == DEFAULT_CREATED_TIME, "Unchanged"
+    assert unsent_row.not_before == datetime(2026, 1, 1, tzinfo=UTC), "Unchanged from base_config.sql"
+
+    # sent conflict: nothing changed at all
+    sent_row = by_key[(conflict_5.csipaus_dynamic_price_id, conflict_5.end_device_lfdi, conflict_5.response_status)]
+    assert sent_row.csipaus_dynamic_price_response_id == 5
+    assert sent_row.sent_at == datetime(2025, 1, 1, tzinfo=UTC), "Unchanged from base_config.sql"
+    assert sent_row.created_at == DEFAULT_CREATED_TIME, "Unchanged"
+    assert sent_row.not_before == datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC), "Unchanged from base_config.sql"
+
+
+@pytest.mark.parametrize(
+    "now, start, limit, expected_ids",
+    [
+        (datetime.min, 0, 99, [2, 3, 4, 6]),
+        (datetime(2026, 1, 1, tzinfo=UTC), 0, 99, [2, 3, 4, 6]),
+        (datetime.min, 1, 2, [3, 4]),  # Paging
+        (datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC), 0, 99, [3, 4, 6]),
+        (datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC), 0, 99, [6]),
+        (datetime(2026, 1, 1, 0, 15, 0, tzinfo=UTC), 0, 99, []),
+    ],
+)
+async def test_fetch_unsent_dynamic_price_responses(
+    pg_base_config, now: datetime, start: int, limit: int, expected_ids: list[int]
+):
+    """Tests the fetched responses match expected values"""
+    async with generate_async_session(pg_base_config) as session:
+        actual = await fetch_unsent_dynamic_price_responses(session, now=now, start=start, limit=limit)
+        assert [e.csipaus_dynamic_price_response_id for e in actual] == expected_ids
+        assert_list_type(CSIPAusDynamicPriceResponse, actual, count=len(expected_ids))
+
+
+async def test_fetch_unsent_dynamic_price_responses_include_dynamic_price_default(pg_base_config):
+    """By default the dynamic_price relationship is left as lazy='raise' and accessing it errors"""
+    async with generate_async_session(pg_base_config) as session:
+        actual = await fetch_unsent_dynamic_price_responses(session, now=datetime.min)
+        assert [e.csipaus_dynamic_price_response_id for e in actual] == [2, 3, 4, 6]
+
+        for response in actual:
+            with pytest.raises(InvalidRequestError):
+                _ = response.dynamic_price
+
+
+async def test_fetch_unsent_dynamic_price_responses_include_dynamic_price(pg_base_config):
+    """include_dynamic_price=True eagerly populates the dynamic_price ORM relationship on every returned response"""
+    # base_config.sql: unsent responses 2, 3, 4, 6 map to dynamic price ids 1, 1, 2, 3 respectively
+    expected_price_ids = {2: 1, 3: 1, 4: 2, 6: 3}
+    expected_mrids = {1: "1111", 2: "2222", 3: "3333", 4: "4444"}
+
+    async with generate_async_session(pg_base_config) as session:
+        actual = await fetch_unsent_dynamic_price_responses(session, now=datetime.min, include_dynamic_price=True)
+        assert [e.csipaus_dynamic_price_response_id for e in actual] == [2, 3, 4, 6]
+
+        for response in actual:
+            assert isinstance(response.dynamic_price, CSIPAusDynamicPrice)
+            assert response.dynamic_price.csipaus_dynamic_price_id == response.csipaus_dynamic_price_id
+            assert (
+                response.dynamic_price.csipaus_dynamic_price_id
+                == expected_price_ids[response.csipaus_dynamic_price_response_id]
+            )
+            assert response.dynamic_price.mrid == expected_mrids[response.csipaus_dynamic_price_id]
 
 
 @pytest.mark.parametrize(

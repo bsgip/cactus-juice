@@ -7,7 +7,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from cactus_juice.csipaus.dto import HasDefaultValues
-from cactus_juice.model import CSIPAusControl, CSIPAusControlResponse, CSIPAusDefault, OCPPMetadata, OCPPReading
+from cactus_juice.model import (
+    CSIPAusControl,
+    CSIPAusControlResponse,
+    CSIPAusDefault,
+    CSIPAusDynamicPrice,
+    CSIPAusDynamicPriceResponse,
+    OCPPMetadata,
+    OCPPReading,
+)
 
 DEFAULT_MAX_DATE = datetime(9999, 1, 1, tzinfo=UTC)
 
@@ -156,6 +164,143 @@ async def fetch_unsent_control_responses(
 
     if include_control:
         stmt = stmt.options(selectinload(CSIPAusControlResponse.control))
+
+    return (await session.execute(stmt)).scalars().all()
+
+
+async def fetch_dynamic_prices_with_mrids(
+    session: AsyncSession, mrids: Iterable[str], start: int = 0, limit: int = 500
+) -> Sequence[CSIPAusDynamicPrice]:
+    """Fetches all CSIPAusDynamicPrice with the specified mRID values. Returns them ordered by PK"""
+    stmt = (
+        select(CSIPAusDynamicPrice)
+        .where(CSIPAusDynamicPrice.mrid.in_(mrids))  # This clause will do the heavy lifting for filtering results
+        .order_by(CSIPAusDynamicPrice.csipaus_dynamic_price_id.asc())
+        .offset(start)
+        .limit(limit)
+    )
+
+    return (await session.execute(stmt)).scalars().all()
+
+
+async def fetch_dynamic_prices_active_from(
+    session: AsyncSession, epoch: datetime, start: int = 0, limit: int = 500
+) -> Sequence[CSIPAusDynamicPrice]:
+    """Fetches all CSIPAusDynamicPrices that are active from this specified epoch. Will consider cancelled times
+    (a price whose finish time is after epoch BUT their cancellation time is BEFORE epoch will be excluded)
+
+    This is designed to be used with an epoch close to "now"
+
+    Returns them ordered by start_time ASC, id ASC."""
+
+    stmt = (
+        select(CSIPAusDynamicPrice)
+        .where(CSIPAusDynamicPrice.finished_at > epoch)  # This clause will do the heavy lifting for filtering results
+        .where(or_(CSIPAusDynamicPrice.cancelled_at.is_(None), CSIPAusDynamicPrice.cancelled_at > epoch))
+        .order_by(CSIPAusDynamicPrice.started_at.asc(), CSIPAusDynamicPrice.csipaus_dynamic_price_id.asc())
+        .offset(start)
+        .limit(limit)
+    )
+
+    return (await session.execute(stmt)).scalars().all()
+
+
+async def upsert_dynamic_prices(session: AsyncSession, dynamic_prices: list[CSIPAusDynamicPrice]) -> None:
+    """Inserts the specified set of dynamic prices - if there is a conflict on mRID, the existing records updated
+    following these rules:
+        1) ONLY the existing cancelled_at value can be updated
+        2) The cancelled_at value will ONLY update if it is currently NULL (no updating a set value)
+
+    does NOT commit any transaction."""
+    if not dynamic_prices:
+        return
+
+    # Excludes PK and computed/default cols
+    insert_columns = (
+        "primacy",
+        "mrid",
+        "duration_seconds",
+        "started_at",
+        "cancelled_at",
+        "reply_to",
+        "price_kwh",
+    )
+
+    values = [{col: getattr(p, col) for col in insert_columns} for p in dynamic_prices]
+
+    # Single round-trip: bulk INSERT ... ON CONFLICT (mrid) DO UPDATE.
+    insert_stmt = pg_insert(CSIPAusDynamicPrice).values(values)
+    excluded = insert_stmt.excluded
+
+    # We dont want to overwrite existing non null values so we lean on coalesce
+    stmt = insert_stmt.on_conflict_do_update(
+        index_elements=["mrid"],
+        set_={
+            "cancelled_at": func.coalesce(CSIPAusDynamicPrice.cancelled_at, excluded.cancelled_at),
+        },
+        where=and_(
+            CSIPAusDynamicPrice.cancelled_at.is_(None), excluded.cancelled_at.is_not(None)
+        ),  # ONLY update where there is actually something to update
+    )
+
+    await session.execute(stmt)
+
+
+async def upsert_dynamic_price_responses(session: AsyncSession, responses: list[CSIPAusDynamicPriceResponse]) -> None:
+    """Inserts the specified set of dynamic price responses - if there is a conflict on the
+    (csipaus_dynamic_price_id, end_device_lfdi, response_status) unique constraint, the existing record is updated
+    following these rules:
+        1) ONLY the existing sent_at value can be updated
+        2) sent_at will ONLY update if the existing row's sent_at is currently NULL
+
+    does NOT commit any transaction."""
+    if not responses:
+        return
+
+    # Excludes PK and computed/default cols
+    insert_columns = (
+        "csipaus_dynamic_price_id",
+        "response_status",
+        "end_device_lfdi",
+        "not_before",
+        "sent_at",
+    )
+
+    values = [{col: getattr(r, col) for col in insert_columns} for r in responses]
+
+    # bulk INSERT ... ON CONFLICT (...) DO UPDATE.
+    insert_stmt = pg_insert(CSIPAusDynamicPriceResponse).values(values)
+    excluded = insert_stmt.excluded
+
+    stmt = insert_stmt.on_conflict_do_update(
+        index_elements=["csipaus_dynamic_price_id", "end_device_lfdi", "response_status"],
+        set_={"sent_at": excluded.sent_at},
+        where=CSIPAusDynamicPriceResponse.sent_at.is_(None),  # ONLY touch responses that haven't been sent yet
+    )
+
+    await session.execute(stmt)
+
+
+async def fetch_unsent_dynamic_price_responses(
+    session: AsyncSession, now: datetime, start: int = 0, limit: int = 500, include_dynamic_price: bool = False
+) -> Sequence[CSIPAusDynamicPriceResponse]:
+    """Fetches all CSIPAusDynamicPriceResponse which are due to send (according to now)
+
+    if include_dynamic_price is True - populates the CSIPAusDynamicPriceResponse.dynamic_price relationship, otherwise
+    it will remain as lazy='raise'
+
+    Returns ordered by the PK ASC"""
+    stmt = (
+        select(CSIPAusDynamicPriceResponse)
+        .where(CSIPAusDynamicPriceResponse.sent_at.is_(None))
+        .where(CSIPAusDynamicPriceResponse.not_before >= now)
+        .order_by(CSIPAusDynamicPriceResponse.csipaus_dynamic_price_response_id.asc())
+        .offset(start)
+        .limit(limit)
+    )
+
+    if include_dynamic_price:
+        stmt = stmt.options(selectinload(CSIPAusDynamicPriceResponse.dynamic_price))
 
     return (await session.execute(stmt)).scalars().all()
 

@@ -1,7 +1,9 @@
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     BIGINT,
+    DECIMAL,
     DOUBLE_PRECISION,
     INTEGER,
     Boolean,
@@ -260,3 +262,79 @@ class CSIPAusConfig(Base):
     )  # PEM encoded X509 server cert for mTLS to check
     verify_hostname: Mapped[bool] = mapped_column(Boolean, server_default="TRUE")
     verify_ssl: Mapped[bool] = mapped_column(Boolean, server_default="TRUE")
+
+
+class CSIPAusDynamicPrice(Base):
+    """Represents a CSIP-AUS dynamic price (basically a flattened TimeTariffInterval + ConsumptionBlock)
+
+    It will NOT represent periodical prices - nor will it map any price beyond the first consumption block"""
+
+    __tablename__ = "csipaus_dynamic_price"
+
+    csipaus_dynamic_price_id: Mapped[int] = mapped_column(BIGINT, name="id", primary_key=True, autoincrement=True)
+
+    primacy: Mapped[int] = mapped_column(INTEGER)  # Primacy of parent TariffProfile
+    mrid: Mapped[str] = mapped_column(String, unique=True)
+
+    duration_seconds: Mapped[int] = mapped_column(INTEGER)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        Computed(
+            # `timestamptz + interval` and bare `extract(epoch from timestamptz)` are only
+            # STABLE (they depend on the session TimeZone), so Postgres rejects them in a
+            # generated column. Pinning the zone with `AT TIME ZONE 'UTC'` on both sides
+            # makes every step IMMUTABLE while preserving the instant.
+            "(started_at AT TIME ZONE 'UTC' + duration_seconds * interval '1 second') AT TIME ZONE 'UTC'",
+            persisted=True,
+        ),
+        index=True,
+    )
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reply_to: Mapped[str | None] = mapped_column(String, nullable=True)  # If set - send Responses to this URI location
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    price_kwh: Mapped[Decimal | None] = mapped_column(
+        DECIMAL(10, 4), nullable=True
+    )  # dollars / kwh - flattened from parent RateComponent
+
+    responses: Mapped[list["CSIPAusDynamicPriceResponse"]] = relationship(
+        lazy="raise", back_populates="dynamic_price", cascade="all, delete-orphan"
+    )
+
+
+class CSIPAusDynamicPriceResponse(Base):
+    """Log of what CSIPAusDynamicPrice responses are required to be sent"""
+
+    __tablename__ = "csipaus_dynamic_price_response"
+
+    csipaus_dynamic_price_response_id: Mapped[int] = mapped_column(
+        BIGINT, name="id", primary_key=True, autoincrement=True
+    )
+    csipaus_dynamic_price_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("csipaus_dynamic_price.id"), index=True)
+
+    response_status: Mapped[int] = mapped_column(INTEGER)
+    end_device_lfdi: Mapped[str] = mapped_column(String)
+    not_before: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True
+    )  # Don't send this response before this time - allows "enqueing" otherwise just set it to now
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    dynamic_price: Mapped["CSIPAusDynamicPrice"] = relationship(lazy="raise", back_populates="responses")
+
+    __table_args__ = (
+        Index(
+            "idx_unsent_dynamic_price_responses",
+            "not_before",
+            postgresql_where=text("sent_at IS NULL"),
+        ),
+        UniqueConstraint(
+            "csipaus_dynamic_price_id",
+            "end_device_lfdi",
+            "response_status",
+            name="uc_csipaus_dynamic_price_response_device_status",
+        ),
+    )

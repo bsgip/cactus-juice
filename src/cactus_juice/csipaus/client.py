@@ -29,6 +29,7 @@ from cactus_juice.crud import (
     fetch_ocpp_metadata,
     fetch_ocpp_readings_in_range,
     fetch_unsent_control_responses,
+    fetch_unsent_dynamic_price_responses,
     update_active_default,
     upsert_control_responses,
     upsert_controls,
@@ -542,15 +543,31 @@ async def poll_derprogram_list(state: ClientState, session: AsyncSession, now: d
 
 async def post_unsent_responses(state: ClientState, session: AsyncSession, now: datetime) -> None:
     """Selects all unsent Responses that are due to send - sends them and then marks the records as sent"""
-    responses = await fetch_unsent_control_responses(session, now, include_control=True)
 
-    logger.info(f"Found {len(responses)} unsent DERControl Responses to send")
-    for response in responses:
-        if response.control.reply_to:
-            body = csipaus_response_to_response(response, subject_mrid=response.control.mrid)
+    # Control responses
+    control_responses = await fetch_unsent_control_responses(session, now, include_control=True)
+    logger.info(f"Found {len(control_responses)} unsent DERControl Responses to send")
+    for ctrl_response in control_responses:
+        if ctrl_response.control.reply_to:
+            body = csipaus_response_to_response(ctrl_response, subject_mrid=ctrl_response.control.mrid)
             await submit_resource(
-                state.context.http, HTTPMethod.POST, response.control.reply_to, body, no_location_header=True
+                state.context.http, HTTPMethod.POST, ctrl_response.control.reply_to, body, no_location_header=True
             )
-            response.sent_at = now
+            ctrl_response.sent_at = now
+
+    # Price responses
+    price_responses = await fetch_unsent_dynamic_price_responses(session, now, include_dynamic_price=True)
+    logger.info(f"Found {len(price_responses)} unsent TimeTariffInterval Responses to send")
+    for price_response in price_responses:
+        if price_response.dynamic_price.reply_to:
+            body = csipaus_response_to_response(price_response, subject_mrid=price_response.dynamic_price.mrid)
+            await submit_resource(
+                state.context.http,
+                HTTPMethod.POST,
+                price_response.dynamic_price.reply_to,
+                body,
+                no_location_header=True,
+            )
+            price_response.sent_at = now
 
     await session.flush()

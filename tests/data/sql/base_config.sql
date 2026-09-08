@@ -67,6 +67,62 @@ INSERT INTO csipaus_default (started_at, finished_at, created_at, ramp_percent_m
 VALUES ('2026-01-01T00:10:00Z', '9999-1-1T00:00:00Z', '2000-01-01T00:00:00Z', 31, TRUE, TRUE, 3001, 3002, 3003, 3004, 3005);
 
 
+-- ========= csipaus_dynamic_price ========
+--
+-- Mirrors the csipaus_control layout above (no superseded_at on this entity - #7 is cancelled instead).
+--
+-- 00:00    00:05   00:10   00:15
+--   |  #1    |   #2  |   #3  |
+--   |            #4          |
+--   |            #5          |   (NULL price_kwh)
+--   |        X   #6          |   (cancelled 00:05)
+--   |            #7  X       |   (cancelled 00:10)
+--
+-- value column for id N is N.000N
+INSERT INTO csipaus_dynamic_price (primacy, mrid, duration_seconds, started_at, cancelled_at, created_at, price_kwh)
+VALUES (1, '1111', 300, '2026-01-01T00:00:00Z', NULL, '2000-01-01T00:00:00Z', 1.0001);
+INSERT INTO csipaus_dynamic_price (primacy, mrid, duration_seconds, started_at, cancelled_at, created_at, price_kwh)
+VALUES (1, '2222', 300, '2026-01-01T00:05:00Z', NULL, '2000-01-01T00:00:00Z', 2.0002);
+INSERT INTO csipaus_dynamic_price (primacy, mrid, duration_seconds, started_at, cancelled_at, created_at, price_kwh)
+VALUES (1, '3333', 300, '2026-01-01T00:10:00Z', NULL, '2000-01-01T00:00:00Z', 3.0003);
+INSERT INTO csipaus_dynamic_price (primacy, mrid, duration_seconds, started_at, cancelled_at, created_at, price_kwh)
+VALUES (2, '4444', 900, '2026-01-01T00:00:00Z', NULL, '2000-01-01T00:00:00Z', 4.0004);
+INSERT INTO csipaus_dynamic_price (primacy, mrid, duration_seconds, started_at, cancelled_at, created_at, price_kwh)
+VALUES (0, '5555', 900, '2026-01-01T00:00:00Z', NULL, '2000-01-01T00:00:00Z', NULL);
+
+-- Cancelled at 5 minutes
+INSERT INTO csipaus_dynamic_price (primacy, mrid, duration_seconds, started_at, cancelled_at, created_at, price_kwh)
+VALUES (0, '6666', 900, '2026-01-01T00:00:00Z', '2026-01-01T00:05:00Z', '2000-01-01T00:00:00Z', 6.0006);
+
+-- Cancelled at 10 minutes
+INSERT INTO csipaus_dynamic_price (primacy, mrid, duration_seconds, started_at, cancelled_at, created_at, price_kwh)
+VALUES (0, '7777', 900, '2026-01-01T00:00:00Z', '2026-01-01T00:10:00Z', '2000-01-01T00:00:00Z', 7.0007);
+
+
+-- ========= csipaus_dynamic_price_response ========
+--
+-- Mirrors csipaus_control_response above.
+--
+-- Sent: #1, #5
+--
+-- Unsent (based on not_before):
+-- 00:00    00:05   00:10
+--   #2       #3    #6
+--            #4
+INSERT INTO csipaus_dynamic_price_response (csipaus_dynamic_price_id, response_status, end_device_lfdi, not_before, sent_at, created_at)
+VALUES (1, 1, 'aaa', '2026-01-01T00:00:00Z', '2026-01-01T00:00:01Z', '2000-01-01T00:00:00Z');
+INSERT INTO csipaus_dynamic_price_response (csipaus_dynamic_price_id, response_status, end_device_lfdi, not_before, sent_at, created_at)
+VALUES (1, 2, 'aaa', '2026-01-01T00:00:00Z', NULL, '2000-01-01T00:00:00Z');
+INSERT INTO csipaus_dynamic_price_response (csipaus_dynamic_price_id, response_status, end_device_lfdi, not_before, sent_at, created_at)
+VALUES (1, 3, 'aaa', '2026-01-01T00:05:00Z', NULL, '2000-01-01T00:00:00Z');
+INSERT INTO csipaus_dynamic_price_response (csipaus_dynamic_price_id, response_status, end_device_lfdi, not_before, sent_at, created_at)
+VALUES (2, 1, 'bbb', '2026-01-01T00:05:00Z', NULL, '2000-01-01T00:00:00Z');
+INSERT INTO csipaus_dynamic_price_response (csipaus_dynamic_price_id, response_status, end_device_lfdi, not_before, sent_at, created_at)
+VALUES (3, 1, 'ccc', '2026-01-01T00:10:00Z', '2025-01-01T00:00:00Z', '2000-01-01T00:00:00Z');
+INSERT INTO csipaus_dynamic_price_response (csipaus_dynamic_price_id, response_status, end_device_lfdi, not_before, sent_at, created_at)
+VALUES (3, 99, 'ccc', '2026-01-01T00:10:00Z', NULL, '2000-01-01T00:00:00Z');
+
+
 -- ========= ocpp_reading ========
 --
 -- reading_start is deliberately NOT in id order so the ORDER BY (reading_start ASC, id ASC) is exercised.

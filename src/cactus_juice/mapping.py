@@ -41,7 +41,13 @@ from envoy_schema.server.schema.sep2.types import (
 
 from cactus_juice.csipaus.dto import DefaultValues
 from cactus_juice.error import BaseJuiceError
-from cactus_juice.model import CSIPAusControl, CSIPAusControlResponse, OCPPMetadata, OCPPReading
+from cactus_juice.model import (
+    CSIPAusControl,
+    CSIPAusControlResponse,
+    CSIPAusDynamicPriceResponse,
+    OCPPMetadata,
+    OCPPReading,
+)
 
 SUPPORTED_READING_TYPES = [
     CSIPAusReadingType.ActivePowerAverage,
@@ -571,7 +577,9 @@ def csipaus_controls_to_responses(controls: Iterable[CSIPAusControl], edev_lfdi:
     return responses
 
 
-def csipaus_response_to_response(response: CSIPAusControlResponse, subject_mrid: str) -> Response:
+def csipaus_response_to_response(
+    response: CSIPAusControlResponse | CSIPAusDynamicPriceResponse, subject_mrid: str
+) -> Response:
     """Maps a db response representation to the sep2 representation"""
     return Response(
         status=ResponseType(response.response_status),
