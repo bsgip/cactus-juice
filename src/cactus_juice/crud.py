@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from cactus_juice.csipaus.dto import HasDefaultValues
 from cactus_juice.model import (
+    CSIPAusConfig,
     CSIPAusControl,
     CSIPAusControlResponse,
     CSIPAusDefault,
@@ -416,3 +417,46 @@ async def fetch_ocpp_metadata(session: AsyncSession) -> OCPPMetadata | None:
     return (
         await session.execute(select(OCPPMetadata).order_by(OCPPMetadata.created_at.desc()).limit(1))
     ).scalar_one_or_none()
+
+
+# The mutable columns on CSIPAusConfig - excludes the PK and created_at.
+CSIPAUS_CONFIG_VALUE_COLUMNS = (
+    "is_aggregator",
+    "certificate_pem",
+    "key_pem",
+    "nmi",
+    "client_pen",
+    "dcap_uri",
+    "serca_pem",
+    "verify_hostname",
+    "verify_ssl",
+)
+
+
+async def fetch_csipaus_config(session: AsyncSession) -> CSIPAusConfig | None:
+    """Fetches the current CSIPAusConfig - the record with the most recent created_at - or None if none has been
+    registered yet"""
+
+    return (
+        await session.execute(select(CSIPAusConfig).order_by(CSIPAusConfig.created_at.desc()).limit(1))
+    ).scalar_one_or_none()
+
+
+async def update_csipaus_config(session: AsyncSession, values: CSIPAusConfig) -> None:
+    """Inserts a new CSIPAusConfig record carrying the specified values - the intent is to always maintain a rolling
+    history of configs, with the current config being the record with the most recent created_at.
+
+    If the current config (per fetch_csipaus_config) already carries exactly these values this is a no-op - we
+    don't want to fragment the history with records that don't actually change anything.
+
+    does NOT commit any transaction."""
+
+    current = await fetch_csipaus_config(session)
+    if current is not None and all(
+        getattr(current, col) == getattr(values, col) for col in CSIPAUS_CONFIG_VALUE_COLUMNS
+    ):
+        return
+
+    await session.execute(
+        insert(CSIPAusConfig).values(**{col: getattr(values, col) for col in CSIPAUS_CONFIG_VALUE_COLUMNS})
+    )

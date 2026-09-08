@@ -168,3 +168,19 @@ VALUES ('2026-01-01T00:10:00Z', 2001, 2002, 2003, 2004, 2005, 2006);
 INSERT INTO ocpp_metadata (created_at, max_voltage_volts, min_voltage_volts, max_power_watts, max_charge_rate_watts, max_discharge_rate_watts, set_grad_w)
 VALUES ('2026-01-01T00:05:00Z', 3001, 3002, 3003, 3004, 3005, 3006);
 
+
+-- ========= csipaus_config ========
+--
+-- created_at is deliberately NOT in id order - fetch_csipaus_config returns the most recent created_at, which is id 2.
+--
+-- id   created_at
+--  1   00:00
+--  3   00:05
+--  2   00:10  <- latest (current)
+INSERT INTO csipaus_config (created_at, is_aggregator, certificate_pem, key_pem, nmi, client_pen, dcap_uri, serca_pem, verify_hostname, verify_ssl)
+VALUES ('2026-01-01T00:00:00Z', TRUE, '\x616161'::bytea, '\x626262'::bytea, 'NMI001', 1001, 'https://example.com/dcap1', '\x636363'::bytea, TRUE, TRUE);
+INSERT INTO csipaus_config (created_at, is_aggregator, certificate_pem, key_pem, nmi, client_pen, dcap_uri, serca_pem, verify_hostname, verify_ssl)
+VALUES ('2026-01-01T00:10:00Z', FALSE, '\x646464'::bytea, '\x656565'::bytea, 'NMI002', 2002, 'https://example.com/dcap2', '\x666666'::bytea, FALSE, FALSE);
+INSERT INTO csipaus_config (created_at, is_aggregator, certificate_pem, key_pem, nmi, client_pen, dcap_uri, serca_pem, verify_hostname, verify_ssl)
+VALUES ('2026-01-01T00:05:00Z', TRUE, NULL, NULL, NULL, NULL, NULL, NULL, TRUE, TRUE);
+

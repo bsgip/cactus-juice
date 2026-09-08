@@ -11,10 +11,12 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
 
 from cactus_juice.crud import (
+    CSIPAUS_CONFIG_VALUE_COLUMNS,
     DEFAULT_MAX_DATE,
     fetch_active_default,
     fetch_controls_active_from,
     fetch_controls_with_mrids,
+    fetch_csipaus_config,
     fetch_defaults_from,
     fetch_dynamic_prices_active_from,
     fetch_dynamic_prices_with_mrids,
@@ -23,6 +25,7 @@ from cactus_juice.crud import (
     fetch_unsent_control_responses,
     fetch_unsent_dynamic_price_responses,
     update_active_default,
+    update_csipaus_config,
     upsert_control_responses,
     upsert_controls,
     upsert_dynamic_price_responses,
@@ -30,6 +33,7 @@ from cactus_juice.crud import (
 )
 from cactus_juice.csipaus.dto import DefaultValues
 from cactus_juice.model import (
+    CSIPAusConfig,
     CSIPAusControl,
     CSIPAusControlResponse,
     CSIPAusDefault,
@@ -1215,6 +1219,178 @@ async def test_fetch_ocpp_metadata_empty(pg_empty_config):
     """No metadata registered yet -> None."""
     async with generate_async_session(pg_empty_config) as session:
         assert await fetch_ocpp_metadata(session) is None
+
+
+def _differing_value(existing: object) -> object:
+    """Returns some value guaranteed to differ from existing, preserving type where there's one to preserve."""
+    if isinstance(existing, bool):
+        return not existing
+    if isinstance(existing, int):
+        return (existing or 0) + 1
+    if isinstance(existing, bytes):
+        return (existing or b"") + b"-changed"
+    if isinstance(existing, str):
+        return (existing or "") + "-changed"
+    return "changed"  # existing was None with no other type info to preserve
+
+
+async def test_fetch_csipaus_config(pg_base_config):
+    """Returns the row with the most recent created_at (id 2), not simply the highest id."""
+    async with generate_async_session(pg_base_config) as session:
+        actual = await fetch_csipaus_config(session)
+
+    assert isinstance(actual, CSIPAusConfig)
+    assert actual.csipaus_config_id == 2
+    assert actual.created_at == datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC)
+    assert actual.is_aggregator is False
+    assert actual.certificate_pem == b"ddd"
+    assert actual.key_pem == b"eee"
+    assert actual.nmi == "NMI002"
+    assert actual.client_pen == 2002
+    assert actual.dcap_uri == "https://example.com/dcap2"
+    assert actual.serca_pem == b"fff"
+    assert actual.verify_hostname is False
+    assert actual.verify_ssl is False
+
+
+async def test_fetch_csipaus_config_empty(pg_empty_config):
+    """No config registered yet -> None."""
+    async with generate_async_session(pg_empty_config) as session:
+        assert await fetch_csipaus_config(session) is None
+
+
+@pytest.mark.parametrize("optional_is_none", [True, False])
+async def test_update_csipaus_config_empty(pg_empty_config, optional_is_none: bool):
+    """Does update work on an empty DB"""
+    # bytes columns aren't generatable by generate_class_instance - supply them explicitly
+    new_values = generate_class_instance(
+        CSIPAusConfig,
+        optional_is_none=optional_is_none,
+        certificate_pem=b"new-cert",
+        key_pem=b"new-key",
+        serca_pem=b"new-serca",
+    )
+
+    async with generate_async_session(pg_empty_config) as session:
+        await update_csipaus_config(session, new_values)
+        await session.commit()
+
+    async with generate_async_session(pg_empty_config) as session:
+        rows = (await session.execute(select(CSIPAusConfig).order_by(CSIPAusConfig.csipaus_config_id))).scalars().all()
+        assert len(rows) == 1
+        entry = rows[0]
+        assert_nowish(entry.created_at)
+        for col in CSIPAUS_CONFIG_VALUE_COLUMNS:
+            assert getattr(entry, col) == getattr(new_values, col)
+
+
+async def test_update_csipaus_config(pg_base_config):
+    """A new config is appended - the rest of the history is left untouched."""
+    # bytes columns aren't generatable by generate_class_instance - supply them explicitly
+    new_values = generate_class_instance(
+        CSIPAusConfig, seed=1001, certificate_pem=b"new-cert", key_pem=b"new-key", serca_pem=b"new-serca"
+    )
+
+    async with generate_async_session(pg_base_config) as session:
+        await update_csipaus_config(session, new_values)
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        rows = (await session.execute(select(CSIPAusConfig).order_by(CSIPAusConfig.csipaus_config_id))).scalars().all()
+
+    # original 3 + 1 appended
+    assert len(rows) == 4
+    by_id = {r.csipaus_config_id: r for r in rows}
+
+    # untouched history
+    assert by_id[1].nmi == "NMI001"
+    assert by_id[2].nmi == "NMI002"
+    assert by_id[3].verify_hostname is True
+
+    # brand new record carrying the supplied values
+    appended = by_id[4]
+    assert_nowish(appended.created_at)
+    for col in CSIPAUS_CONFIG_VALUE_COLUMNS:
+        assert getattr(appended, col) == getattr(new_values, col)
+
+    # ... and it is the one now reported as current
+    async with generate_async_session(pg_base_config) as session:
+        current = await fetch_csipaus_config(session)
+    assert current is not None
+    assert current.csipaus_config_id == 4
+
+
+async def test_update_csipaus_config_noop_when_values_match(pg_base_config):
+    """When the supplied values exactly match the current config the call is a no-op - the history is left
+    completely untouched."""
+    async with generate_async_session(pg_base_config) as session:
+        current = await fetch_csipaus_config(session)
+        assert current is not None
+        matching_values = clone_class_instance(current)
+
+    async with generate_async_session(pg_base_config) as session:
+        await update_csipaus_config(session, matching_values)
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        rows = (await session.execute(select(CSIPAusConfig).order_by(CSIPAusConfig.csipaus_config_id))).scalars().all()
+
+    # Untouched - still the original 3 records, and the current config (by created_at) is still id 2
+    assert len(rows) == 3
+    async with generate_async_session(pg_base_config) as session:
+        still_current = await fetch_csipaus_config(session)
+    assert still_current is not None
+    assert still_current.csipaus_config_id == 2
+
+
+@pytest.mark.parametrize("differing_col", CSIPAUS_CONFIG_VALUE_COLUMNS)
+async def test_update_csipaus_config_not_noop_when_a_value_differs(pg_base_config, differing_col: str):
+    """A single differing value column is enough to force a new record to be appended."""
+    async with generate_async_session(pg_base_config) as session:
+        current = await fetch_csipaus_config(session)
+        assert current is not None
+        new_values = clone_class_instance(current)
+        setattr(new_values, differing_col, _differing_value(getattr(current, differing_col)))
+
+    async with generate_async_session(pg_base_config) as session:
+        await update_csipaus_config(session, new_values)
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        rows = (await session.execute(select(CSIPAusConfig).order_by(CSIPAusConfig.csipaus_config_id))).scalars().all()
+
+    assert len(rows) == 4
+    by_id = {r.csipaus_config_id: r for r in rows}
+    for col in CSIPAUS_CONFIG_VALUE_COLUMNS:
+        assert getattr(by_id[4], col) == getattr(new_values, col)
+
+
+async def test_update_csipaus_config_no_commit(pg_base_config):
+    """update_csipaus_config must never commit/rollback on its own - the caller owns the transaction."""
+    # bytes columns aren't generatable by generate_class_instance - supply them explicitly
+    new_values = generate_class_instance(
+        CSIPAusConfig, seed=1, certificate_pem=b"new-cert", key_pem=b"new-key", serca_pem=b"new-serca"
+    )
+
+    async with generate_async_session(pg_base_config) as session:
+        count_before = (await session.execute(select(func.count()).select_from(CSIPAusConfig))).scalar_one()
+
+    # No explicit commit -> nothing sticks
+    async with generate_async_session(pg_base_config) as session:
+        await update_csipaus_config(session, new_values)
+
+    async with generate_async_session(pg_base_config) as session:
+        assert count_before == (await session.execute(select(func.count()).select_from(CSIPAusConfig))).scalar_one()
+
+    # Explicit commit -> sticks
+    async with generate_async_session(pg_base_config) as session:
+        await update_csipaus_config(session, new_values)
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        assert (count_before + 1) == (
+            await session.execute(select(func.count()).select_from(CSIPAusConfig))
+        ).scalar_one()
 
 
 async def test_csipaus_default_rejects_overlapping_active_range(pg_base_config):
