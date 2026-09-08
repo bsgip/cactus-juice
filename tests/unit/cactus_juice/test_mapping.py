@@ -20,6 +20,7 @@ from envoy_schema.server.schema.sep2.der import (
 from envoy_schema.server.schema.sep2.der_control_types import ActivePower
 from envoy_schema.server.schema.sep2.event import EventStatus, EventStatusType
 from envoy_schema.server.schema.sep2.metering_mirror import MirrorMeterReadingListRequest, MirrorUsagePointRequest
+from envoy_schema.server.schema.sep2.response import ResponseType
 from envoy_schema.server.schema.sep2.types import (
     DataQualifierType,
     DateTimeIntervalType,
@@ -36,6 +37,7 @@ from cactus_juice.mapping import (
     SUPPORTED_READING_TYPES,
     MirrorUsagePointMrids,
     create_location_mup,
+    csipaus_controls_to_responses,
     default_dercontrols_to_values,
     dercontrol_to_csipaus_control,
     generate_hashed_mrid,
@@ -49,7 +51,7 @@ from cactus_juice.mapping import (
     sep2_to_value,
     value_to_sep2,
 )
-from cactus_juice.model import CSIPAusControl, OCPPMetadata, OCPPReading
+from cactus_juice.model import CSIPAusControl, CSIPAusControlResponse, OCPPMetadata, OCPPReading
 
 
 def assert_mrid(mrid: str, pen: int | None):
@@ -862,3 +864,121 @@ def test_dercontrol_to_csipaus_control_status_flags(
         assert before <= control.superseded_at <= after
     else:
         assert control.superseded_at is None
+
+
+# ---------------------------------------------------------------------------
+# csipaus_controls_to_responses
+# ---------------------------------------------------------------------------
+
+_EDEV_LFDI = "AA" * 20
+
+
+def _control(
+    seed: int = 301, cancelled_at: datetime | None = None, superseded_at: datetime | None = None
+) -> CSIPAusControl:
+    """A CSIPAusControl with distinct auto-generated timestamps (override cancelled_at / superseded_at as needed)."""
+    return generate_class_instance(CSIPAusControl, seed=seed, cancelled_at=cancelled_at, superseded_at=superseded_at)
+
+
+def _by_status(responses: list[CSIPAusControlResponse]) -> dict[int, CSIPAusControlResponse]:
+    by_status = {r.response_status: r for r in responses}
+    assert len(by_status) == len(responses), "each status should appear at most once per control"
+    return by_status
+
+
+def test_csipaus_controls_to_responses_empty():
+    assert csipaus_controls_to_responses([], _EDEV_LFDI) == []
+
+
+def test_csipaus_controls_to_responses_running_control():
+    """A control that was neither cancelled nor superseded -> received, started, completed."""
+    control = _control(cancelled_at=None, superseded_at=None)
+
+    responses = csipaus_controls_to_responses([control], _EDEV_LFDI)
+
+    by_status = _by_status(responses)
+    assert set(by_status) == {
+        ResponseType.EVENT_RECEIVED,
+        ResponseType.EVENT_STARTED,
+        ResponseType.EVENT_COMPLETED,
+    }
+
+    for r in responses:
+        assert r.control is control
+        assert r.end_device_lfdi == _EDEV_LFDI
+        assert r.sent_at is None
+
+    assert by_status[ResponseType.EVENT_RECEIVED].not_before == control.created_at
+    assert by_status[ResponseType.EVENT_STARTED].not_before == control.started_at
+    assert by_status[ResponseType.EVENT_COMPLETED].not_before == control.finished_at
+
+
+def test_csipaus_controls_to_responses_cancelled_control():
+    """A cancelled control emits EVENT_CANCELLED (at cancelled_at) and no EVENT_COMPLETED."""
+    cancelled_at = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
+    control = _control(cancelled_at=cancelled_at, superseded_at=None)
+
+    responses = csipaus_controls_to_responses([control], _EDEV_LFDI)
+
+    by_status = _by_status(responses)
+    assert set(by_status) == {
+        ResponseType.EVENT_RECEIVED,
+        ResponseType.EVENT_STARTED,
+        ResponseType.EVENT_CANCELLED,
+    }
+    assert by_status[ResponseType.EVENT_CANCELLED].not_before == cancelled_at
+
+
+def test_csipaus_controls_to_responses_superseded_control():
+    """A superseded control emits EVENT_SUPERSEDED (at superseded_at) and no EVENT_COMPLETED."""
+    superseded_at = datetime(2026, 6, 2, 9, 30, 0, tzinfo=UTC)
+    control = _control(cancelled_at=None, superseded_at=superseded_at)
+
+    responses = csipaus_controls_to_responses([control], _EDEV_LFDI)
+
+    by_status = _by_status(responses)
+    assert set(by_status) == {
+        ResponseType.EVENT_RECEIVED,
+        ResponseType.EVENT_STARTED,
+        ResponseType.EVENT_SUPERSEDED,
+    }
+    assert by_status[ResponseType.EVENT_SUPERSEDED].not_before == superseded_at
+
+
+def test_csipaus_controls_to_responses_cancelled_and_superseded_control():
+    """Both timestamps set -> both terminal responses, still no EVENT_COMPLETED."""
+    control = _control(
+        cancelled_at=datetime(2026, 7, 3, 1, 0, 0, tzinfo=UTC),
+        superseded_at=datetime(2026, 7, 3, 2, 0, 0, tzinfo=UTC),
+    )
+
+    responses = csipaus_controls_to_responses([control], _EDEV_LFDI)
+
+    assert set(_by_status(responses)) == {
+        ResponseType.EVENT_RECEIVED,
+        ResponseType.EVENT_STARTED,
+        ResponseType.EVENT_CANCELLED,
+        ResponseType.EVENT_SUPERSEDED,
+    }
+
+
+def test_csipaus_controls_to_responses_multiple_controls_flattened_in_order():
+    """Responses for every control are returned, control-by-control in input order."""
+    running = _control(seed=401, cancelled_at=None, superseded_at=None)
+    cancelled = _control(seed=402, cancelled_at=datetime(2026, 8, 4, tzinfo=UTC), superseded_at=None)
+
+    responses = csipaus_controls_to_responses([running, cancelled], _EDEV_LFDI)
+
+    assert len(responses) == 6
+    assert all(r.control is running for r in responses[:3])
+    assert all(r.control is cancelled for r in responses[3:])
+    assert {r.response_status for r in responses[:3]} == {
+        ResponseType.EVENT_RECEIVED,
+        ResponseType.EVENT_STARTED,
+        ResponseType.EVENT_COMPLETED,
+    }
+    assert {r.response_status for r in responses[3:]} == {
+        ResponseType.EVENT_RECEIVED,
+        ResponseType.EVENT_STARTED,
+        ResponseType.EVENT_CANCELLED,
+    }

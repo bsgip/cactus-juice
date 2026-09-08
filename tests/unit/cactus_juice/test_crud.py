@@ -13,6 +13,7 @@ from cactus_juice.crud import (
     DEFAULT_MAX_DATE,
     fetch_active_default,
     fetch_controls_active_from,
+    fetch_controls_with_mrids,
     fetch_defaults_from,
     fetch_ocpp_metadata,
     fetch_ocpp_readings_in_range,
@@ -42,6 +43,35 @@ def _as_utc(value: datetime) -> datetime:
 
 
 DEFAULT_CREATED_TIME = datetime(2000, 1, 1, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    "mrids, start, limit, expected_ids",
+    [
+        # base_config.sql seeds ids 1..7 with mrids '1111'..'7777'
+        (["1111", "3333", "7777"], 0, 99, [1, 3, 7]),
+        (["7777", "3333", "1111"], 0, 99, [1, 3, 7]),  # result order follows the PK, not the argument order
+        (["3333", "3333", "3333"], 0, 99, [3]),  # duplicates collapse
+        (["1111"], 0, 99, [1]),
+        ([], 0, 99, []),  # empty iterable -> empty result, no error
+        (["does-not-exist"], 0, 99, []),  # unknown mrid -> empty result
+        (["1111", "no", "4444", "5555"], 0, 99, [1, 4, 5]),  # unknown mrids simply ignored
+        (["1111", "2222", "3333", "4444"], 1, 2, [2, 3]),  # paging
+        (["1111", "2222", "3333", "4444"], 2, 99, [3, 4]),
+        (("1111", "4444"), 0, 99, [1, 4]),  # any Iterable[str], not just a list
+    ],
+)
+async def test_fetch_controls_with_mrids(pg_base_config, mrids, start: int, limit: int, expected_ids: list[int]):
+    async with generate_async_session(pg_base_config) as session:
+        actual = await fetch_controls_with_mrids(session, mrids, start=start, limit=limit)
+        assert [e.csipaus_control_id for e in actual] == expected_ids
+        assert_list_type(CSIPAusControl, actual, count=len(expected_ids))
+
+
+async def test_fetch_controls_with_mrids_empty_db(pg_empty_config):
+    async with generate_async_session(pg_empty_config) as session:
+        actual = await fetch_controls_with_mrids(session, ["1111", "2222"])
+    assert actual == []
 
 
 @pytest.mark.parametrize(

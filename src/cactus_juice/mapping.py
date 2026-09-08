@@ -28,6 +28,7 @@ from envoy_schema.server.schema.sep2.metering_mirror import (
     MirrorUsagePoint,
     MirrorUsagePointRequest,
 )
+from envoy_schema.server.schema.sep2.response import ResponseType
 from envoy_schema.server.schema.sep2.types import (
     DataQualifierType,
     DateTimeIntervalType,
@@ -40,7 +41,7 @@ from envoy_schema.server.schema.sep2.types import (
 
 from cactus_juice.csipaus.dto import DefaultValues
 from cactus_juice.error import BaseJuiceError
-from cactus_juice.model import CSIPAusControl, OCPPMetadata, OCPPReading
+from cactus_juice.model import CSIPAusControl, CSIPAusControlResponse, OCPPMetadata, OCPPReading
 
 SUPPORTED_READING_TYPES = [
     CSIPAusReadingType.ActivePowerAverage,
@@ -497,3 +498,64 @@ def dercontrol_to_csipaus_control(derc: DERControlResponse, primacy: int) -> CSI
         generation_limit_watts=_value_to_int(sep2_to_value(base.opModGenLimW)),
         storage_target_watts=_value_to_int(sep2_to_value(base.opModStorageTargetW)),
     )
+
+
+def csipaus_controls_to_responses(controls: Iterable[CSIPAusControl], edev_lfdi: str) -> list[CSIPAusControlResponse]:
+    """Converts each control into a set of CSIPAusControlResponses that will be required to be sent. Does NOT
+    factor in the current clock time, all required responses will be generated and returned.
+
+    controls should be pulled from the DB directly - they will require PK / other DB generated fields to be set"""
+
+    responses: list[CSIPAusControlResponse] = []
+    for control in controls:
+        # Every response needs to be received/started
+        responses.append(
+            CSIPAusControlResponse(
+                control=control,
+                response_status=ResponseType.EVENT_RECEIVED,
+                end_device_lfdi=edev_lfdi,
+                not_before=control.created_at,
+                sent_at=None,
+            )
+        )
+        responses.append(
+            CSIPAusControlResponse(
+                control=control,
+                response_status=ResponseType.EVENT_STARTED,
+                end_device_lfdi=edev_lfdi,
+                not_before=control.started_at,
+                sent_at=None,
+            )
+        )
+
+        if control.cancelled_at:
+            responses.append(
+                CSIPAusControlResponse(
+                    control=control,
+                    response_status=ResponseType.EVENT_CANCELLED,
+                    end_device_lfdi=edev_lfdi,
+                    not_before=control.cancelled_at,
+                    sent_at=None,
+                )
+            )
+        if control.superseded_at:
+            responses.append(
+                CSIPAusControlResponse(
+                    control=control,
+                    response_status=ResponseType.EVENT_SUPERSEDED,
+                    end_device_lfdi=edev_lfdi,
+                    not_before=control.superseded_at,
+                    sent_at=None,
+                )
+            )
+        if control.superseded_at is None and control.cancelled_at is None:
+            responses.append(
+                CSIPAusControlResponse(
+                    control=control,
+                    response_status=ResponseType.EVENT_COMPLETED,
+                    end_device_lfdi=edev_lfdi,
+                    not_before=control.finished_at,
+                    sent_at=None,
+                )
+            )
+    return responses

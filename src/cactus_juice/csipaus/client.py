@@ -25,9 +25,11 @@ from envoy_schema.server.schema.sep2.types import DeviceCategory
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cactus_juice.crud import (
+    fetch_controls_with_mrids,
     fetch_ocpp_metadata,
     fetch_ocpp_readings_in_range,
     update_active_default,
+    upsert_control_responses,
     upsert_controls,
 )
 from cactus_juice.csipaus.config import CSIPAusContext
@@ -37,6 +39,7 @@ from cactus_juice.mapping import (
     SUPPORTED_READING_TYPES,
     MirrorUsagePointMrids,
     create_location_mup,
+    csipaus_controls_to_responses,
     default_dercontrols_to_values,
     dercontrol_to_csipaus_control,
     generate_mup_mrids,
@@ -522,6 +525,13 @@ async def poll_derprogram_list(state: ClientState, session: AsyncSession, now: d
     logger.info(f"Updating with {len(all_controls)} DERControls and {len(all_default_primacies)} DefaultDERControls")
     await upsert_controls(session, all_controls)
     await update_active_default(session, now, default_dercontrols_to_values(all_default_primacies))
+
+    # next we want to queue up some responses - these require the PK of the CSIPAusControl as well as the ACTUAL
+    # values for superseded/cancelled so we need to go via the DB. The upsert will NOT duplicate responses so
+    # we're free to send "everything" down
+    db_controls = await fetch_controls_with_mrids(session, (c.mrid for c in all_controls))
+    responses = csipaus_controls_to_responses(db_controls, state.context.edev_lfdi)
+    await upsert_control_responses(session, responses)
 
     # Update the state with the info that we polled
     state.derpl_poll_rate = timedelta(seconds=min(all_poll_rates)) if all_poll_rates else state.fsal_poll_rate

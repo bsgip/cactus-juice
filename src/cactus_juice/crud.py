@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import and_, func, insert, or_, select, update
@@ -9,6 +9,21 @@ from cactus_juice.csipaus.dto import HasDefaultValues
 from cactus_juice.model import CSIPAusControl, CSIPAusControlResponse, CSIPAusDefault, OCPPMetadata, OCPPReading
 
 DEFAULT_MAX_DATE = datetime(9999, 1, 1, tzinfo=UTC)
+
+
+async def fetch_controls_with_mrids(
+    session: AsyncSession, mrids: Iterable[str], start: int = 0, limit: int = 500
+) -> Sequence[CSIPAusControl]:
+    """Fetches all CSIPAusControl with the specified mRID values. Returns them ordered by PK"""
+    stmt = (
+        select(CSIPAusControl)
+        .where(CSIPAusControl.mrid.in_(mrids))  # This clause will do the heavy lifting for filtering results
+        .order_by(CSIPAusControl.csipaus_control_id.asc())
+        .offset(start)
+        .limit(limit)
+    )
+
+    return (await session.execute(stmt)).scalars().all()
 
 
 async def fetch_controls_active_from(
