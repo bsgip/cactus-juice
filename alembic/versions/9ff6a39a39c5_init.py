@@ -1,8 +1,8 @@
 """init
 
-Revision ID: e32bdbc77214
+Revision ID: 9ff6a39a39c5
 Revises:
-Create Date: 2026-09-07 16:24:37.140506
+Create Date: 2026-09-08 16:00:27.853745
 
 """
 
@@ -14,7 +14,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "e32bdbc77214"
+revision: str = "9ff6a39a39c5"
 down_revision: str | Sequence[str] | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -57,6 +57,7 @@ def upgrade() -> None:
         ),
         sa.Column("cancelled_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("superseded_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("reply_to", sa.String(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("ramp_time_seconds", sa.Integer(), nullable=True),
         sa.Column("connect", sa.Boolean(), nullable=True),

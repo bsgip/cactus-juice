@@ -171,6 +171,7 @@ class CSIPAusControl(Base):
     )
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reply_to: Mapped[str | None] = mapped_column(String, nullable=True)  # If set - send Responses to this URI location
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

@@ -28,6 +28,7 @@ from cactus_juice.crud import (
     fetch_controls_with_mrids,
     fetch_ocpp_metadata,
     fetch_ocpp_readings_in_range,
+    fetch_unsent_control_responses,
     update_active_default,
     upsert_control_responses,
     upsert_controls,
@@ -40,6 +41,7 @@ from cactus_juice.mapping import (
     MirrorUsagePointMrids,
     create_location_mup,
     csipaus_controls_to_responses,
+    csipaus_response_to_response,
     default_dercontrols_to_values,
     dercontrol_to_csipaus_control,
     generate_mup_mrids,
@@ -536,3 +538,19 @@ async def poll_derprogram_list(state: ClientState, session: AsyncSession, now: d
     # Update the state with the info that we polled
     state.derpl_poll_rate = timedelta(seconds=min(all_poll_rates)) if all_poll_rates else state.fsal_poll_rate
     state.derpl_last_poll = now
+
+
+async def post_unsent_responses(state: ClientState, session: AsyncSession, now: datetime) -> None:
+    """Selects all unsent Responses that are due to send - sends them and then marks the records as sent"""
+    responses = await fetch_unsent_control_responses(session, now, include_control=True)
+
+    logger.info(f"Found {len(responses)} unsent DERControl Responses to send")
+    for response in responses:
+        if response.control.reply_to:
+            body = csipaus_response_to_response(response, subject_mrid=response.control.mrid)
+            await submit_resource(
+                state.context.http, HTTPMethod.POST, response.control.reply_to, body, no_location_header=True
+            )
+            response.sent_at = now
+
+    await session.flush()

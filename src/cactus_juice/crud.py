@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from sqlalchemy import and_, func, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from cactus_juice.csipaus.dto import HasDefaultValues
 from cactus_juice.model import CSIPAusControl, CSIPAusControlResponse, CSIPAusDefault, OCPPMetadata, OCPPReading
@@ -67,6 +68,7 @@ async def upsert_controls(session: AsyncSession, controls: list[CSIPAusControl])
         "started_at",
         "cancelled_at",
         "superseded_at",
+        "reply_to",
         "ramp_time_seconds",
         "connect",
         "energize",
@@ -135,9 +137,12 @@ async def upsert_control_responses(session: AsyncSession, responses: list[CSIPAu
 
 
 async def fetch_unsent_control_responses(
-    session: AsyncSession, now: datetime, start: int = 0, limit: int = 500
+    session: AsyncSession, now: datetime, start: int = 0, limit: int = 500, include_control: bool = False
 ) -> Sequence[CSIPAusControlResponse]:
     """Fetches all CSIPAusControlResponse which are due to send (according to now)
+
+    if include_control is True - populates the CSIPAusControlResponse.control relationship, otherwise it will remain
+    as lazy='raise'
 
     Returns ordered by the PK ASC"""
     stmt = (
@@ -148,6 +153,9 @@ async def fetch_unsent_control_responses(
         .offset(start)
         .limit(limit)
     )
+
+    if include_control:
+        stmt = stmt.options(selectinload(CSIPAusControlResponse.control))
 
     return (await session.execute(stmt)).scalars().all()
 

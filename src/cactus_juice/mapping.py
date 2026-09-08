@@ -28,7 +28,7 @@ from envoy_schema.server.schema.sep2.metering_mirror import (
     MirrorUsagePoint,
     MirrorUsagePointRequest,
 )
-from envoy_schema.server.schema.sep2.response import ResponseType
+from envoy_schema.server.schema.sep2.response import Response, ResponseType
 from envoy_schema.server.schema.sep2.types import (
     DataQualifierType,
     DateTimeIntervalType,
@@ -481,6 +481,12 @@ def dercontrol_to_csipaus_control(derc: DERControlResponse, primacy: int) -> CSI
     if derc.EventStatus_.currentStatus == EventStatusType.Superseded:
         superseded_at = datetime.now(UTC)
 
+    # We *should* be a little more granular here but we're just going to assume that ANY response required will
+    # generate all responses.
+    reply_to = None
+    if derc.responseRequired and int(derc.responseRequired, 16):
+        reply_to = derc.replyTo
+
     base = derc.DERControlBase_
     return CSIPAusControl(
         primacy=primacy,
@@ -489,6 +495,7 @@ def dercontrol_to_csipaus_control(derc: DERControlResponse, primacy: int) -> CSI
         duration_seconds=derc.interval.duration,
         cancelled_at=cancelled_at,
         superseded_at=superseded_at,
+        reply_to=reply_to,
         ramp_time_seconds=base.rampTms,
         connect=base.opModConnect,
         energize=base.opModEnergize,
@@ -508,6 +515,9 @@ def csipaus_controls_to_responses(controls: Iterable[CSIPAusControl], edev_lfdi:
 
     responses: list[CSIPAusControlResponse] = []
     for control in controls:
+        if control.reply_to is None:
+            continue
+
         # Every response needs to be received/started
         responses.append(
             CSIPAusControlResponse(
@@ -559,3 +569,13 @@ def csipaus_controls_to_responses(controls: Iterable[CSIPAusControl], edev_lfdi:
                 )
             )
     return responses
+
+
+def csipaus_response_to_response(response: CSIPAusControlResponse, subject_mrid: str) -> Response:
+    """Maps a db response representation to the sep2 representation"""
+    return Response(
+        status=ResponseType(response.response_status),
+        createdDateTime=int(response.not_before.timestamp()),
+        endDeviceLFDI=response.end_device_lfdi,
+        subject=subject_mrid,
+    )

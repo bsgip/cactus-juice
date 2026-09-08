@@ -7,7 +7,7 @@ from assertical.asserts.type import assert_list_type
 from assertical.fake.generator import clone_class_instance, generate_class_instance
 from assertical.fixtures.postgres import generate_async_session
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, InvalidRequestError
 
 from cactus_juice.crud import (
     DEFAULT_MAX_DATE,
@@ -444,6 +444,34 @@ async def test_fetch_unsent_control_responses(
         actual = await fetch_unsent_control_responses(session, now=now, start=start, limit=limit)
         assert [e.csipaus_control_response_id for e in actual] == expected_ids
         assert_list_type(CSIPAusControlResponse, actual, count=len(expected_ids))
+
+
+async def test_fetch_unsent_control_responses_include_control_default(pg_base_config):
+    """By default the control relationship is left as lazy='raise' and accessing it errors"""
+    async with generate_async_session(pg_base_config) as session:
+        actual = await fetch_unsent_control_responses(session, now=datetime.min)
+        assert [e.csipaus_control_response_id for e in actual] == [2, 3, 4, 6]
+
+        for response in actual:
+            with pytest.raises(InvalidRequestError):
+                _ = response.control
+
+
+async def test_fetch_unsent_control_responses_include_control(pg_base_config):
+    """include_control=True eagerly populates the control ORM relationship on every returned response"""
+    # base_config.sql: unsent responses 2, 3, 4, 6 map to control ids 1, 1, 2, 3 respectively
+    expected_control_ids = {2: 1, 3: 1, 4: 2, 6: 3}
+    expected_mrids = {1: "1111", 2: "2222", 3: "3333", 4: "4444"}
+
+    async with generate_async_session(pg_base_config) as session:
+        actual = await fetch_unsent_control_responses(session, now=datetime.min, include_control=True)
+        assert [e.csipaus_control_response_id for e in actual] == [2, 3, 4, 6]
+
+        for response in actual:
+            assert isinstance(response.control, CSIPAusControl)
+            assert response.control.csipaus_control_id == response.csipaus_control_id
+            assert response.control.csipaus_control_id == expected_control_ids[response.csipaus_control_response_id]
+            assert response.control.mrid == expected_mrids[response.csipaus_control_id]
 
 
 @pytest.mark.parametrize(

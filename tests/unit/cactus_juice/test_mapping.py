@@ -762,6 +762,8 @@ def _derc(
     mrid: str = "DERC-MRID-1",
     start: int = 1_700_000_000,
     duration: int = 3600,
+    reply_to: str | None = None,
+    response_required: str | None = None,
     status: EventStatusType = EventStatusType.Active,
     **base_kwargs: object,
 ) -> DERControlResponse:
@@ -776,10 +778,26 @@ def _derc(
         EventStatus_=event_status,
         DERControlBase_=base,
         interval=DateTimeIntervalType(start=start, duration=duration),
+        replyTo=reply_to,
+        responseRequired=response_required,
     )
 
 
-def test_dercontrol_to_csipaus_control_field_mapping():
+@pytest.mark.parametrize(
+    "reply_to, response_required, expected_reply_to",
+    [
+        (None, None, None),
+        ("/foo", None, None),
+        (None, "03", None),
+        ("/foo", "00", None),
+        ("/foo", "03", "/foo"),
+        ("/foo", "01", "/foo"),
+        ("/foo", "FF", "/foo"),
+    ],
+)
+def test_dercontrol_to_csipaus_control_field_mapping(
+    reply_to: str | None, response_required: str | None, expected_reply_to: str | None
+):
     """Each DERControlResponse field must land in its own CSIPAusControl column (copy-paste guard)."""
     derc = _derc(
         mrid="control-abc",
@@ -787,6 +805,8 @@ def test_dercontrol_to_csipaus_control_field_mapping():
         duration=1800,
         status=EventStatusType.Active,
         rampTms=42,
+        reply_to=reply_to,
+        response_required=response_required,
         opModConnect=True,
         opModEnergize=False,
         opModImpLimW=ActivePower(multiplier=0, value=111),
@@ -805,6 +825,7 @@ def test_dercontrol_to_csipaus_control_field_mapping():
     assert control.duration_seconds == 1800
     assert control.cancelled_at is None
     assert control.superseded_at is None
+    assert control.reply_to == expected_reply_to
 
     assert control.ramp_time_seconds == 42
     assert control.connect is True
@@ -874,10 +895,15 @@ _EDEV_LFDI = "AA" * 20
 
 
 def _control(
-    seed: int = 301, cancelled_at: datetime | None = None, superseded_at: datetime | None = None
+    seed: int = 301,
+    cancelled_at: datetime | None = None,
+    superseded_at: datetime | None = None,
+    reply_to: str | None = "/foo",
 ) -> CSIPAusControl:
     """A CSIPAusControl with distinct auto-generated timestamps (override cancelled_at / superseded_at as needed)."""
-    return generate_class_instance(CSIPAusControl, seed=seed, cancelled_at=cancelled_at, superseded_at=superseded_at)
+    return generate_class_instance(
+        CSIPAusControl, seed=seed, cancelled_at=cancelled_at, superseded_at=superseded_at, reply_to=reply_to
+    )
 
 
 def _by_status(responses: list[CSIPAusControlResponse]) -> dict[int, CSIPAusControlResponse]:
@@ -943,6 +969,14 @@ def test_csipaus_controls_to_responses_superseded_control():
         ResponseType.EVENT_SUPERSEDED,
     }
     assert by_status[ResponseType.EVENT_SUPERSEDED].not_before == superseded_at
+
+
+def test_csipaus_controls_to_responses_no_reply_to():
+    """A control with no reply_to is skipped."""
+    control = _control(reply_to=None)
+
+    responses = csipaus_controls_to_responses([control], _EDEV_LFDI)
+    assert len(responses) == 0
 
 
 def test_csipaus_controls_to_responses_cancelled_and_superseded_control():
