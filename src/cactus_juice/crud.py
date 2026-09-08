@@ -86,7 +86,7 @@ async def upsert_controls(session: AsyncSession, controls: list[CSIPAusControl])
 
 async def upsert_control_responses(session: AsyncSession, responses: list[CSIPAusControlResponse]) -> None:
     """Inserts the specified set of control responses - if there is a conflict on the
-    (csipaus_control_id, end_device_mrid, response_status) unique constraint, the existing record is updated
+    (csipaus_control_id, end_device_lfdi, response_status) unique constraint, the existing record is updated
     following these rules:
         1) ONLY the existing sent_at value can be updated
         2) sent_at will ONLY update if the existing row's sent_at is currently NULL
@@ -99,7 +99,7 @@ async def upsert_control_responses(session: AsyncSession, responses: list[CSIPAu
     insert_columns = (
         "csipaus_control_id",
         "response_status",
-        "end_device_mrid",
+        "end_device_lfdi",
         "not_before",
         "sent_at",
     )
@@ -111,7 +111,7 @@ async def upsert_control_responses(session: AsyncSession, responses: list[CSIPAu
     excluded = insert_stmt.excluded
 
     stmt = insert_stmt.on_conflict_do_update(
-        index_elements=["csipaus_control_id", "end_device_mrid", "response_status"],
+        index_elements=["csipaus_control_id", "end_device_lfdi", "response_status"],
         set_={"sent_at": excluded.sent_at},
         where=CSIPAusControlResponse.sent_at.is_(None),  # ONLY touch responses that haven't been sent yet
     )

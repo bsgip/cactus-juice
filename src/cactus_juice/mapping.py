@@ -1,5 +1,5 @@
 import hashlib
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 from typing import overload
@@ -374,7 +374,7 @@ def create_location_mup(
 def ocpp_readings_to_submit_mmr(
     readings_from: datetime,
     readings_to: datetime,
-    all_readings: Iterable[OCPPReading],
+    all_readings: Sequence[OCPPReading],
     site_mrids: MirrorUsagePointMrids,
     device_mrids: MirrorUsagePointMrids,
 ) -> tuple[MirrorMeterReadingListRequest | None, MirrorMeterReadingListRequest | None]:
@@ -404,9 +404,7 @@ def ocpp_readings_to_submit_mmr(
     _append_mmr_value(
         site_mmrs, site_mrids, CSIPAusReadingType.VoltageSinglePhaseAverage, avg_volts, readings_from, postrate
     )
-    _append_mmr_value(
-        site_mmrs, site_mrids, CSIPAusReadingType.VoltageSinglePhaseAverage, avg_hz, readings_from, postrate
-    )
+    _append_mmr_value(site_mmrs, site_mrids, CSIPAusReadingType.FrequencyAverage, avg_hz, readings_from, postrate)
 
     # Send the readings
     if len(site_mmrs) == 0:

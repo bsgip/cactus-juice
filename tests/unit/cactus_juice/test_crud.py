@@ -243,7 +243,7 @@ async def test_upsert_control_responses_no_commit(pg_base_config):
                     CSIPAusControlResponse,
                     seed=101,
                     csipaus_control_id=2,
-                    end_device_mrid="brand-new-device",
+                    end_device_lfdi="brand-new-device",
                     sent_at=None,
                 )
             ],
@@ -264,7 +264,7 @@ async def test_upsert_control_responses_no_commit(pg_base_config):
                     CSIPAusControlResponse,
                     seed=101,
                     csipaus_control_id=2,
-                    end_device_mrid="brand-new-device",
+                    end_device_lfdi="brand-new-device",
                     sent_at=None,
                 )
             ],
@@ -286,7 +286,7 @@ async def test_upsert_control_responses_no_commit(pg_base_config):
                     CSIPAusControlResponse,
                     seed=101,
                     csipaus_control_id=2,
-                    end_device_mrid="brand-new-device",
+                    end_device_lfdi="brand-new-device",
                     sent_at=None,
                 )
             ],
@@ -311,7 +311,7 @@ async def test_upsert_control_responses(pg_base_config, optional_is_none: bool):
         CSIPAusControlResponse,
         seed=101,
         csipaus_control_id=1,
-        end_device_mrid="aaa",
+        end_device_lfdi="aaa",
         optional_is_none=not optional_is_none,
     )
     new_response_2 = generate_class_instance(
@@ -319,7 +319,7 @@ async def test_upsert_control_responses(pg_base_config, optional_is_none: bool):
         seed=202,
         optional_is_none=optional_is_none,
         csipaus_control_id=1,
-        end_device_mrid="aaa",
+        end_device_lfdi="aaa",
     )
 
     # existing row is unsent -> not_before takes the new value, everything else is left alone
@@ -330,7 +330,7 @@ async def test_upsert_control_responses(pg_base_config, optional_is_none: bool):
         optional_is_none=optional_is_none,
         csipaus_control_id=1,
         response_status=2,
-        end_device_mrid="aaa",
+        end_device_lfdi="aaa",
     )
 
     # existing row has already been sent -> the whole row must be left untouched
@@ -341,7 +341,7 @@ async def test_upsert_control_responses(pg_base_config, optional_is_none: bool):
         optional_is_none=optional_is_none,
         csipaus_control_id=3,
         response_status=1,
-        end_device_mrid="ccc",
+        end_device_lfdi="ccc",
     )
 
     # Act - insert clones so the originals stay detached from the session
@@ -356,11 +356,11 @@ async def test_upsert_control_responses(pg_base_config, optional_is_none: bool):
         rows = (await session.execute(select(CSIPAusControlResponse))).scalars().all()
 
     assert len(rows) == count_before + 2
-    by_key = {(r.csipaus_control_id, r.end_device_mrid, r.response_status): r for r in rows}
+    by_key = {(r.csipaus_control_id, r.end_device_lfdi, r.response_status): r for r in rows}
 
     # brand new tuple inserted verbatim
     inserted_1 = by_key[
-        (new_response_1.csipaus_control_id, new_response_1.end_device_mrid, new_response_1.response_status)
+        (new_response_1.csipaus_control_id, new_response_1.end_device_lfdi, new_response_1.response_status)
     ]
     assert_class_instance_equality(
         CSIPAusControlResponse,
@@ -370,7 +370,7 @@ async def test_upsert_control_responses(pg_base_config, optional_is_none: bool):
     )
     assert_nowish(inserted_1.created_at)
     inserted_2 = by_key[
-        (new_response_2.csipaus_control_id, new_response_2.end_device_mrid, new_response_2.response_status)
+        (new_response_2.csipaus_control_id, new_response_2.end_device_lfdi, new_response_2.response_status)
     ]
     assert_class_instance_equality(
         CSIPAusControlResponse,
@@ -381,14 +381,14 @@ async def test_upsert_control_responses(pg_base_config, optional_is_none: bool):
     assert_nowish(inserted_1.created_at)
 
     # unsent conflict: not_before moved, every other column untouched
-    unsent_row = by_key[(conflict_2.csipaus_control_id, conflict_2.end_device_mrid, conflict_2.response_status)]
+    unsent_row = by_key[(conflict_2.csipaus_control_id, conflict_2.end_device_lfdi, conflict_2.response_status)]
     assert unsent_row.csipaus_control_response_id == 2
     assert unsent_row.sent_at == conflict_2.sent_at, "This is updated"
     assert unsent_row.created_at == DEFAULT_CREATED_TIME, "Unchanged"
     assert unsent_row.not_before == datetime(2026, 1, 1, tzinfo=UTC), "Unchanged from base_config.sql"
 
     # sent conflict: nothing changed at all
-    sent_row = by_key[(conflict_5.csipaus_control_id, conflict_5.end_device_mrid, conflict_5.response_status)]
+    sent_row = by_key[(conflict_5.csipaus_control_id, conflict_5.end_device_lfdi, conflict_5.response_status)]
     assert sent_row.csipaus_control_response_id == 5
     assert sent_row.sent_at == datetime(2025, 1, 1, tzinfo=UTC), "Unchanged from base_config.sql"
     assert sent_row.created_at == DEFAULT_CREATED_TIME, "Unchanged"

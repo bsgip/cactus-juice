@@ -198,7 +198,7 @@ class CSIPAusControlResponse(Base):
     csipaus_control_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("csipaus_control.id"), index=True)
 
     response_status: Mapped[int] = mapped_column(INTEGER)
-    end_device_mrid: Mapped[str] = mapped_column(String)
+    end_device_lfdi: Mapped[str] = mapped_column(String)
     not_before: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), index=True
     )  # Don't send this response before this time - allows "enqueing" otherwise just set it to now
@@ -216,7 +216,7 @@ class CSIPAusControlResponse(Base):
         ),
         UniqueConstraint(
             "csipaus_control_id",
-            "end_device_mrid",
+            "end_device_lfdi",
             "response_status",
             name="uc_csipaus_control_response_control_device_status",
         ),

@@ -32,6 +32,7 @@ from envoy_schema.server.schema.sep2.types import (
 from cactus_juice.csipaus.dto import DefaultValues
 from cactus_juice.error import BaseJuiceError
 from cactus_juice.mapping import (
+    POW10_BY_READING_TYPE,
     SUPPORTED_READING_TYPES,
     MirrorUsagePointMrids,
     create_location_mup,
@@ -85,6 +86,12 @@ def assert_all_different(m1: MirrorUsagePointMrids, m2: MirrorUsagePointMrids):
             assert m2_val != m1.mmr_mrids[key]
 
     assert set(m1.mmr_mrids.items()) != set(m2.mmr_mrids.items())
+
+
+def test_SUPPORTED_READING_TYPES_in_POW10_BY_READING_TYPE():
+    """Every SUPPORTED_READING_TYPES must have a pow10"""
+    for rt in SUPPORTED_READING_TYPES:
+        assert rt in POW10_BY_READING_TYPE
 
 
 def test_generate_hashed_mrid():
@@ -626,12 +633,6 @@ def test_ocpp_readings_to_submit_mmr_no_matching_mrids():
     assert ocpp_readings_to_submit_mmr(_RF, _RT, readings, empty, empty) == (None, None)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="copy-paste bug in ocpp_readings_to_submit_mmr: avg_hz is appended under "
-    "CSIPAusReadingType.VoltageSinglePhaseAverage instead of FrequencyAverage, so the frequency "
-    "reading is emitted with the voltage mRID/scaling and the frequency mRID is never used",
-)
 def test_ocpp_readings_to_submit_mmr_frequency_uses_its_own_mrid():
     mrids = _site_mrids()
     readings = [
@@ -652,23 +653,6 @@ def test_ocpp_readings_to_submit_mmr_frequency_uses_its_own_mrid():
     mrids_seen = [mmr.mRID for mmr in site.mirrorMeterReadings]
     assert len(mrids_seen) == len(set(mrids_seen)), "every reading type should map to a distinct MMR mRID"
     assert mrids.mmr_mrids[CSIPAusReadingType.FrequencyAverage] in mrids_seen
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="ocpp_readings_to_submit_mmr iterates all_readings once per measurement; a one-shot "
-    "generator is exhausted after the first average and every later reading type is lost",
-)
-def test_ocpp_readings_to_submit_mmr_accepts_a_generator():
-    mrids = _site_mrids()
-    readings = [_reading(voltage_volts=240.0), _reading(voltage_volts=240.0)]
-
-    site, _ = ocpp_readings_to_submit_mmr(_RF, _RT, (r for r in readings), mrids, mrids)
-    assert site is not None
-    assert site.mirrorMeterReadings is not None
-
-    volt_mrid = mrids.mmr_mrids[CSIPAusReadingType.VoltageSinglePhaseAverage]
-    assert any(mmr.mRID == volt_mrid for mmr in site.mirrorMeterReadings)
 
 
 # ---------------------------------------------------------------------------

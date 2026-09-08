@@ -135,7 +135,7 @@ def upgrade() -> None:
         sa.Column("id", sa.BIGINT(), autoincrement=True, nullable=False),
         sa.Column("csipaus_control_id", sa.BIGINT(), nullable=False),
         sa.Column("response_status", sa.INTEGER(), nullable=False),
-        sa.Column("end_device_mrid", sa.String(), nullable=False),
+        sa.Column("end_device_lfdi", sa.String(), nullable=False),
         sa.Column("not_before", sa.DateTime(timezone=True), nullable=False),
         sa.Column("sent_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -146,7 +146,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
             "csipaus_control_id",
-            "end_device_mrid",
+            "end_device_lfdi",
             "response_status",
             name="uc_csipaus_control_response_control_device_status",
         ),
