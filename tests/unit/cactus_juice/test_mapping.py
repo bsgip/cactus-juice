@@ -9,11 +9,20 @@ from cactus_test_definitions.csipaus import (
     CSIPAusReadingLocation,
     CSIPAusReadingType,
 )
-from envoy_schema.server.schema.sep2.der import DefaultDERControl, DERCapability, DERControlBase, DERSettings, DERStatus
+from envoy_schema.server.schema.sep2.der import (
+    DefaultDERControl,
+    DERCapability,
+    DERControlBase,
+    DERControlResponse,
+    DERSettings,
+    DERStatus,
+)
 from envoy_schema.server.schema.sep2.der_control_types import ActivePower
+from envoy_schema.server.schema.sep2.event import EventStatus, EventStatusType
 from envoy_schema.server.schema.sep2.metering_mirror import MirrorMeterReadingListRequest, MirrorUsagePointRequest
 from envoy_schema.server.schema.sep2.types import (
     DataQualifierType,
+    DateTimeIntervalType,
     FlowDirectionType,
     KindType,
     ServiceKind,
@@ -27,6 +36,7 @@ from cactus_juice.mapping import (
     MirrorUsagePointMrids,
     create_location_mup,
     default_dercontrols_to_values,
+    dercontrol_to_csipaus_control,
     generate_hashed_mrid,
     generate_mmr_mrids,
     generate_mup_mrids,
@@ -38,7 +48,7 @@ from cactus_juice.mapping import (
     sep2_to_value,
     value_to_sep2,
 )
-from cactus_juice.model import OCPPMetadata, OCPPReading
+from cactus_juice.model import CSIPAusControl, OCPPMetadata, OCPPReading
 
 
 def assert_mrid(mrid: str, pen: int | None):
@@ -754,3 +764,117 @@ def test_default_dercontrols_to_values_merges_unset_fields():
 def test_default_dercontrols_to_values_setgradw_is_optional():
     assert default_dercontrols_to_values([_dderc(1, set_grad_w=None)]).ramp_percent_max_second_hundredths is None
     assert default_dercontrols_to_values([_dderc(1, set_grad_w=15)]).ramp_percent_max_second_hundredths == 15
+
+
+# ---------------------------------------------------------------------------
+# dercontrol_to_csipaus_control
+# ---------------------------------------------------------------------------
+
+
+def _derc(
+    *,
+    mrid: str = "DERC-MRID-1",
+    start: int = 1_700_000_000,
+    duration: int = 3600,
+    status: EventStatusType = EventStatusType.Active,
+    **base_kwargs: object,
+) -> DERControlResponse:
+    """A DERControlResponse with an all-None DERControlBase (override individual opMod* fields as needed)."""
+    event_status = generate_class_instance(EventStatus, optional_is_none=True, currentStatus=int(status))
+    base = generate_class_instance(DERControlBase, optional_is_none=True)
+    base = base.model_copy(update=dict(base_kwargs))
+    return generate_class_instance(
+        DERControlResponse,
+        optional_is_none=True,
+        mRID=mrid,
+        EventStatus_=event_status,
+        DERControlBase_=base,
+        interval=DateTimeIntervalType(start=start, duration=duration),
+    )
+
+
+def test_dercontrol_to_csipaus_control_field_mapping():
+    """Each DERControlResponse field must land in its own CSIPAusControl column (copy-paste guard)."""
+    derc = _derc(
+        mrid="control-abc",
+        start=1_700_000_000,
+        duration=1800,
+        status=EventStatusType.Active,
+        rampTms=42,
+        opModConnect=True,
+        opModEnergize=False,
+        opModImpLimW=ActivePower(multiplier=0, value=111),
+        opModExpLimW=ActivePower(multiplier=0, value=222),
+        opModLoadLimW=ActivePower(multiplier=0, value=333),
+        opModGenLimW=ActivePower(multiplier=0, value=444),
+        opModStorageTargetW=ActivePower(multiplier=0, value=555),
+    )
+
+    control = dercontrol_to_csipaus_control(derc, primacy=7)
+
+    assert isinstance(control, CSIPAusControl)
+    assert control.primacy == 7
+    assert control.mrid == "control-abc"
+    assert control.started_at == datetime(2023, 11, 14, 22, 13, 20, tzinfo=UTC)
+    assert control.duration_seconds == 1800
+    assert control.cancelled_at is None
+    assert control.superseded_at is None
+
+    assert control.ramp_time_seconds == 42
+    assert control.connect is True
+    assert control.energize is False
+    assert control.import_limit_watts == 111
+    assert control.export_limit_watts == 222
+    assert control.load_limit_watts == 333
+    assert control.generation_limit_watts == 444
+    assert control.storage_target_watts == 555
+
+
+def test_dercontrol_to_csipaus_control_all_optionals_none():
+    """An all-None DERControlBase must not raise and leaves every optional control value unset."""
+    control = dercontrol_to_csipaus_control(_derc(), primacy=1)
+
+    assert control.ramp_time_seconds is None
+    assert control.connect is None
+    assert control.energize is None
+    assert control.import_limit_watts is None
+    assert control.export_limit_watts is None
+    assert control.load_limit_watts is None
+    assert control.generation_limit_watts is None
+    assert control.storage_target_watts is None
+
+
+def test_dercontrol_to_csipaus_control_applies_multiplier():
+    control = dercontrol_to_csipaus_control(_derc(opModExpLimW=ActivePower(multiplier=2, value=3)), primacy=1)
+
+    assert control.export_limit_watts == 300
+
+
+@pytest.mark.parametrize(
+    "status, expect_cancelled, expect_superseded",
+    [
+        (EventStatusType.Scheduled, False, False),
+        (EventStatusType.Active, False, False),
+        (EventStatusType.Cancelled, True, False),
+        (EventStatusType.CancelledWithRandomization, True, False),
+        (EventStatusType.Superseded, False, True),
+    ],
+)
+def test_dercontrol_to_csipaus_control_status_flags(
+    status: EventStatusType, expect_cancelled: bool, expect_superseded: bool
+):
+    before = datetime.now(UTC)
+    control = dercontrol_to_csipaus_control(_derc(status=status), primacy=1)
+    after = datetime.now(UTC)
+
+    if expect_cancelled:
+        assert control.cancelled_at is not None
+        assert before <= control.cancelled_at <= after
+    else:
+        assert control.cancelled_at is None
+
+    if expect_superseded:
+        assert control.superseded_at is not None
+        assert before <= control.superseded_at <= after
+    else:
+        assert control.superseded_at is None

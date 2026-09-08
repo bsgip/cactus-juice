@@ -1,60 +1,50 @@
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from http import HTTPMethod
 from typing import cast
 
-from cactus_test_definitions.csipaus import CSIPAusReadingLocation, CSIPAusReadingType
+from cactus_test_definitions.csipaus import CSIPAusReadingLocation
 from envoy_schema.server.schema.csip_aus.connection_point import ConnectionPointRequest
 from envoy_schema.server.schema.sep2.der import (
     DefaultDERControl,
-    DERCapability,
     DERControlListResponse,
-    DERControlType,
     DERListResponse,
     DERProgramListResponse,
-    DERSettings,
-    DERStatus,
-    DERType,
-    DOESupportedMode,
-    VPPControlType,
 )
-from envoy_schema.server.schema.sep2.der_control_types import ActivePower, VoltageRMS
 from envoy_schema.server.schema.sep2.device_capability import DeviceCapabilityResponse
 from envoy_schema.server.schema.sep2.end_device import EndDeviceListResponse, EndDeviceRequest, EndDeviceResponse
 from envoy_schema.server.schema.sep2.function_set_assignments import FunctionSetAssignmentsListResponse
-from envoy_schema.server.schema.sep2.metering import Reading, ReadingType
 from envoy_schema.server.schema.sep2.metering_mirror import (
-    MirrorMeterReading,
-    MirrorMeterReadingListRequest,
     MirrorUsagePoint,
     MirrorUsagePointList,
-    MirrorUsagePointRequest,
 )
 from envoy_schema.server.schema.sep2.time import TimeResponse
-from envoy_schema.server.schema.sep2.types import DateTimeIntervalType, DeviceCategory, FlowDirectionType, ServiceKind
+from envoy_schema.server.schema.sep2.types import DeviceCategory
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from cactus_juice.crud import fetch_ocpp_metadata, fetch_ocpp_readings_in_range
+from cactus_juice.crud import (
+    fetch_ocpp_metadata,
+    fetch_ocpp_readings_in_range,
+    update_active_default,
+    upsert_controls,
+)
 from cactus_juice.csipaus.config import CSIPAusContext
 from cactus_juice.csipaus.server import get_resource, paginate_list_resource_items, submit_resource
 from cactus_juice.db import DatabaseConnection
-from cactus_juice.error import RemoteServiceError
 from cactus_juice.mapping import (
-    POW10_BY_READING_TYPE,
     SUPPORTED_READING_TYPES,
     MirrorUsagePointMrids,
     create_location_mup,
+    default_dercontrols_to_values,
+    dercontrol_to_csipaus_control,
     generate_mup_mrids,
-    generate_reading_type_values,
-    generate_role_flags,
     ocpp_metadata_to_sep2,
     ocpp_readings_to_submit_mmr,
     previous_post_period,
-    value_to_sep2,
 )
-from cactus_juice.model import OCPPMetadata, OCPPReading
+from cactus_juice.model import CSIPAusControl
 
 logger = logging.getLogger(__name__)
 
@@ -491,9 +481,10 @@ async def poll_derprogram_list(state: ClientState, session: AsyncSession, now: d
         logger.info("No DERProgramList href(s) discovered - unable to poll.")
         return
 
-    # Walk all the DERPrograms
-    all_poll_rates: list[int | None] = []
+    # Walk all the DERPrograms - looking for defaults and DERControls
+    all_poll_rates: list[int] = []
     all_default_primacies: list[tuple[int, DefaultDERControl]] = []
+    all_controls: list[CSIPAusControl] = []
     for derpl_href in state.derpl_hrefs:
         derps = await paginate_list_resource_items(
             DERProgramListResponse,
@@ -502,13 +493,15 @@ async def poll_derprogram_list(state: ClientState, session: AsyncSession, now: d
             100,
             lambda derpl: cast(DERProgramListResponse, derpl).DERProgram,
         )
-        all_poll_rates.append(derps.poll_rate_seconds)
+        if derps.poll_rate_seconds is not None:
+            all_poll_rates.append(derps.poll_rate_seconds)
         for derp in derps.items:
+            primacy = derp.primacy
             # Fetch the DefaultDERControl
             if derp.DefaultDERControlLink is not None:
                 logger.info(f"Fetching DefaultDERControl {derp.DefaultDERControlLink.href} for DERProgram {derp.href}")
                 dderc = await get_resource(DefaultDERControl, state.context.http, derp.DefaultDERControlLink.href)
-                all_default_primacies.append((derp.primacy, dderc))
+                all_default_primacies.append((primacy, dderc))
 
             # Fetch the DERControls
             if derp.DERControlListLink is not None:
@@ -521,4 +514,15 @@ async def poll_derprogram_list(state: ClientState, session: AsyncSession, now: d
                     lambda dercl: cast(DERControlListResponse, dercl).DERControl,
                 )
 
-    raise NotImplementedError()
+                if dercs.items:
+                    all_controls.extend(dercontrol_to_csipaus_control(derc, primacy) for derc in dercs.items)
+
+    # Persist all the data we just scraped - we have to carefully update things - these crud functions will ensure
+    # we correctly insert/update the records and don't thrash the DB if we keep polling the same data.
+    logger.info(f"Updating with {len(all_controls)} DERControls and {len(all_default_primacies)} DefaultDERControls")
+    await upsert_controls(session, all_controls)
+    await update_active_default(session, now, default_dercontrols_to_values(all_default_primacies))
+
+    # Update the state with the info that we polled
+    state.derpl_poll_rate = timedelta(seconds=min(all_poll_rates)) if all_poll_rates else state.fsal_poll_rate
+    state.derpl_last_poll = now

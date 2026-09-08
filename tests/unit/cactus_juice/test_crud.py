@@ -545,6 +545,64 @@ async def test_update_active_default_rolls_forward(pg_base_config):
     assert _as_utc(rows[-1].finished_at) == DEFAULT_MAX_DATE
 
 
+async def test_update_active_default_noop_when_values_match(pg_base_config):
+    """When the supplied values exactly match the currently active default the call is a no-op - the history
+    is left completely untouched (no new record, the active record keeps its max-date finish)."""
+    now = datetime(2026, 1, 1, 0, 12, 0, tzinfo=UTC)
+
+    async with generate_async_session(pg_base_config) as session:
+        current = await fetch_active_default(session, now)
+        assert current is not None
+        matching_values = DefaultValues(**{col: getattr(current, col) for col in DEFAULT_VALUE_COLUMNS})
+
+    async with generate_async_session(pg_base_config) as session:
+        await update_active_default(session, now, matching_values)
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        rows = (
+            (await session.execute(select(CSIPAusDefault).order_by(CSIPAusDefault.csipaus_default_id))).scalars().all()
+        )
+
+    # Untouched - still the original 3 records and the active one still runs to the max date
+    assert len(rows) == 3
+    assert rows[-1].csipaus_default_id == 3
+    assert rows[-1].started_at == datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC)
+    assert _as_utc(rows[-1].finished_at) == DEFAULT_MAX_DATE
+
+
+@pytest.mark.parametrize("differing_col", DEFAULT_VALUE_COLUMNS)
+async def test_update_active_default_not_noop_when_a_value_differs(pg_base_config, differing_col: str):
+    """A single differing value column is enough to force a new record + close off the active one."""
+    now = datetime(2026, 1, 1, 0, 12, 0, tzinfo=UTC)
+
+    async with generate_async_session(pg_base_config) as session:
+        current = await fetch_active_default(session, now)
+        assert current is not None
+        fields = {col: getattr(current, col) for col in DEFAULT_VALUE_COLUMNS}
+
+    existing = fields[differing_col]
+    fields[differing_col] = (not existing) if isinstance(existing, bool) else (existing or 0) + 1
+    new_values = DefaultValues(**fields)
+
+    async with generate_async_session(pg_base_config) as session:
+        await update_active_default(session, now, new_values)
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        rows = (
+            (await session.execute(select(CSIPAusDefault).order_by(CSIPAusDefault.csipaus_default_id))).scalars().all()
+        )
+
+    assert len(rows) == 4
+    by_id = {r.csipaus_default_id: r for r in rows}
+    assert by_id[3].finished_at == now, "previously active record closed off at now"
+    assert by_id[4].started_at == now
+    assert _as_utc(by_id[4].finished_at) == DEFAULT_MAX_DATE
+    for col in DEFAULT_VALUE_COLUMNS:
+        assert getattr(by_id[4], col) == getattr(new_values, col)
+
+
 async def test_update_active_default_no_commit(pg_base_config):
     """update_active_default must never commit/rollback on its own - the caller owns the transaction."""
     now = datetime(2026, 1, 1, 0, 12, 0, tzinfo=UTC)
@@ -632,9 +690,7 @@ async def test_fetch_ocpp_readings_in_range_values(pg_base_config):
 
 async def test_fetch_ocpp_readings_in_range_empty_db(pg_empty_config):
     async with generate_async_session(pg_empty_config) as session:
-        actual = await fetch_ocpp_readings_in_range(
-            session, readings_from=datetime.min, readings_to=DEFAULT_MAX_DATE
-        )
+        actual = await fetch_ocpp_readings_in_range(session, readings_from=datetime.min, readings_to=DEFAULT_MAX_DATE)
     assert actual == []
 
 

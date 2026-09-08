@@ -178,17 +178,10 @@ async def update_active_default(session: AsyncSession, now: datetime, values: Ha
 
     The intent is to always maintain a rolling history of the "active" defaults through time
 
-    does NOT commit any transaction."""
+    If the currently active default already carries exactly these values this is a no-op - we don't want to
+    fragment the history with records that don't actually change anything.
 
-    # Close off any record still active at (or beyond) now. The started_at <= now guard keeps us from
-    # inverting the range of a future-dated record - if one somehow exists the overlap exclusion
-    # constraint will reject the insert below rather than silently corrupting the history.
-    await session.execute(
-        update(CSIPAusDefault)
-        .where(CSIPAusDefault.started_at <= now)
-        .where(CSIPAusDefault.finished_at > now)
-        .values(finished_at=now)
-    )
+    does NOT commit any transaction."""
 
     # The default value columns on CSIPAusDefault - i.e. everything a HasDefaultValues carries. Excludes the
     # PK and the started_at/finished_at (+ computed active_range) window columns.
@@ -201,6 +194,21 @@ async def update_active_default(session: AsyncSession, now: datetime, values: Ha
         "load_limit_watts",
         "generation_limit_watts",
         "storage_target_watts",
+    )
+
+    # Nothing to do if the active default is already carrying these exact values.
+    current = await fetch_active_default(session, now)
+    if current is not None and all(getattr(current, col) == getattr(values, col) for col in default_value_columns):
+        return
+
+    # Close off any record still active at (or beyond) now. The started_at <= now guard keeps us from
+    # inverting the range of a future-dated record - if one somehow exists the overlap exclusion
+    # constraint will reject the insert below rather than silently corrupting the history.
+    await session.execute(
+        update(CSIPAusDefault)
+        .where(CSIPAusDefault.started_at <= now)
+        .where(CSIPAusDefault.finished_at > now)
+        .values(finished_at=now)
     )
 
     await session.execute(

@@ -1,7 +1,7 @@
 import hashlib
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import overload
 
 from cactus_test_definitions.csipaus import (
@@ -11,6 +11,7 @@ from cactus_test_definitions.csipaus import (
 from envoy_schema.server.schema.sep2.der import (
     DefaultDERControl,
     DERCapability,
+    DERControlResponse,
     DERControlType,
     DERSettings,
     DERStatus,
@@ -19,6 +20,7 @@ from envoy_schema.server.schema.sep2.der import (
     VPPControlType,
 )
 from envoy_schema.server.schema.sep2.der_control_types import ActivePower, VoltageRMS
+from envoy_schema.server.schema.sep2.event import EventStatusType
 from envoy_schema.server.schema.sep2.metering import Reading, ReadingType
 from envoy_schema.server.schema.sep2.metering_mirror import (
     MirrorMeterReading,
@@ -38,7 +40,7 @@ from envoy_schema.server.schema.sep2.types import (
 
 from cactus_juice.csipaus.dto import DefaultValues
 from cactus_juice.error import BaseJuiceError
-from cactus_juice.model import OCPPMetadata, OCPPReading
+from cactus_juice.model import CSIPAusControl, OCPPMetadata, OCPPReading
 
 SUPPORTED_READING_TYPES = [
     CSIPAusReadingType.ActivePowerAverage,
@@ -333,7 +335,7 @@ def _append_mmr_value(
 def create_location_mup(
     location: CSIPAusReadingLocation, mrids: MirrorUsagePointMrids, device_lfdi: str
 ) -> MirrorUsagePoint:
-    """Creates a MUP for creating the specified location"""
+    """Creates a MUP for creating the specified location when submitted to a CSIP-Aus server."""
 
     role_flags = generate_role_flags(location)
 
@@ -454,4 +456,46 @@ def default_dercontrols_to_values(dderc_primacy_vals: Iterable[tuple[int, Defaul
         generation_limit_watts=generation_limit_watts,
         storage_target_watts=storage_target_watts,
         ramp_percent_max_second_hundredths=ramp_percent_max_second_hundredths,
+    )
+
+
+def _value_to_int(v: float | int | None) -> int | None:
+    if v is None:
+        return None
+    return int(v)
+
+
+def dercontrol_to_csipaus_control(derc: DERControlResponse, primacy: int) -> CSIPAusControl:
+    """Maps a raw DERControl to the internal DB representation. The cancelled/superseded times will be set to
+    now (if appropriate), NOT the actual time it was superseded as we only care about when WE discovered it"""
+
+    # We mark something as cancelled/superseded based on when we saw it
+    # The crud layer will ensure that the value will be write once
+    cancelled_at = None
+    if (
+        derc.EventStatus_.currentStatus == EventStatusType.Cancelled
+        or derc.EventStatus_.currentStatus == EventStatusType.CancelledWithRandomization
+    ):
+        cancelled_at = datetime.now(UTC)
+
+    superseded_at = None
+    if derc.EventStatus_.currentStatus == EventStatusType.Superseded:
+        superseded_at = datetime.now(UTC)
+
+    base = derc.DERControlBase_
+    return CSIPAusControl(
+        primacy=primacy,
+        mrid=derc.mRID,
+        started_at=datetime.fromtimestamp(derc.interval.start, tz=UTC),
+        duration_seconds=derc.interval.duration,
+        cancelled_at=cancelled_at,
+        superseded_at=superseded_at,
+        ramp_time_seconds=base.rampTms,
+        connect=base.opModConnect,
+        energize=base.opModEnergize,
+        import_limit_watts=_value_to_int(sep2_to_value(base.opModImpLimW)),
+        export_limit_watts=_value_to_int(sep2_to_value(base.opModExpLimW)),
+        load_limit_watts=_value_to_int(sep2_to_value(base.opModLoadLimW)),
+        generation_limit_watts=_value_to_int(sep2_to_value(base.opModGenLimW)),
+        storage_target_watts=_value_to_int(sep2_to_value(base.opModStorageTargetW)),
     )
