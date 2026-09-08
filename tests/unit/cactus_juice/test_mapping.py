@@ -8,13 +8,15 @@ from cactus_test_definitions.csipaus import (
     CSIPAusReadingLocation,
     CSIPAusReadingType,
 )
+from envoy_schema.server.schema.sep2.der_control_types import ActivePower
 from envoy_schema.server.schema.sep2.types import (
     DataQualifierType,
     KindType,
     UomType,
 )
 
-from cactus_juice.csipaus.mup import (
+from cactus_juice.error import BaseJuiceError
+from cactus_juice.mapping import (
     MirrorUsagePointMrids,
     generate_hashed_mrid,
     generate_mmr_mrids,
@@ -22,9 +24,9 @@ from cactus_juice.csipaus.mup import (
     generate_reading_type_values,
     generate_role_flags,
     previous_post_period,
+    sep2_to_value,
     value_to_sep2,
 )
-from cactus_juice.error import BaseJuiceError
 
 
 def assert_mrid(mrid: str, pen: int | None):
@@ -322,3 +324,29 @@ def test_value_to_sep2(v: float, pow10: int, expected: int):
     assert isinstance(actual, int)
     assert actual == expected
     assert value_to_sep2(-v, pow10) == -expected
+
+
+@pytest.mark.parametrize(
+    "sep2_val, expected",
+    [
+        (None, None),
+        (ActivePower(multiplier=0, value=0), 0.0),
+        (ActivePower(multiplier=-2, value=0), 0.0),
+        (ActivePower(multiplier=3, value=0), 0.0),
+        (ActivePower(multiplier=0, value=123), 123.0),
+        (ActivePower(multiplier=-1, value=123), 12.3),
+        (ActivePower(multiplier=1, value=123), 1230.0),
+        (ActivePower(multiplier=2, value=123), 12300.0),
+        (ActivePower(multiplier=-2, value=123), 1.23),
+        (ActivePower(multiplier=-2, value=-456), -4.56),
+        (ActivePower(multiplier=1, value=-456), -4560.0),
+        (ActivePower(multiplier=0, value=-456), -456.0),
+    ],
+)
+def test_sep2_to_value(sep2_val: ActivePower | None, expected: float | None):
+    actual = sep2_to_value(sep2_val)
+    if expected is None:
+        assert actual is None
+    else:
+        assert isinstance(actual, float) or isinstance(actual, int)
+        assert actual == pytest.approx(expected)

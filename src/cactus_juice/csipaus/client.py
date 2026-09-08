@@ -7,8 +7,23 @@ from typing import cast
 
 from cactus_test_definitions.csipaus import CSIPAusReadingLocation, CSIPAusReadingType
 from envoy_schema.server.schema.csip_aus.connection_point import ConnectionPointRequest
+from envoy_schema.server.schema.sep2.der import (
+    DefaultDERControl,
+    DERCapability,
+    DERControlListResponse,
+    DERControlType,
+    DERListResponse,
+    DERProgramListResponse,
+    DERSettings,
+    DERStatus,
+    DERType,
+    DOESupportedMode,
+    VPPControlType,
+)
+from envoy_schema.server.schema.sep2.der_control_types import ActivePower, VoltageRMS
 from envoy_schema.server.schema.sep2.device_capability import DeviceCapabilityResponse
 from envoy_schema.server.schema.sep2.end_device import EndDeviceListResponse, EndDeviceRequest, EndDeviceResponse
+from envoy_schema.server.schema.sep2.function_set_assignments import FunctionSetAssignmentsListResponse
 from envoy_schema.server.schema.sep2.metering import Reading, ReadingType
 from envoy_schema.server.schema.sep2.metering_mirror import (
     MirrorMeterReading,
@@ -21,39 +36,31 @@ from envoy_schema.server.schema.sep2.time import TimeResponse
 from envoy_schema.server.schema.sep2.types import DateTimeIntervalType, DeviceCategory, FlowDirectionType, ServiceKind
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from cactus_juice.crud import fetch_ocpp_readings_in_range
+from cactus_juice.crud import fetch_ocpp_metadata, fetch_ocpp_readings_in_range
 from cactus_juice.csipaus.config import CSIPAusContext
-from cactus_juice.csipaus.mup import (
-    MirrorUsagePointMrids,
-    generate_mup_mrids,
-    generate_reading_type_values,
-    generate_role_flags,
-    previous_post_period,
-    value_to_sep2,
-)
 from cactus_juice.csipaus.server import get_resource, paginate_list_resource_items, submit_resource
 from cactus_juice.db import DatabaseConnection
 from cactus_juice.error import RemoteServiceError
-from cactus_juice.model import OCPPReading
+from cactus_juice.mapping import (
+    POW10_BY_READING_TYPE,
+    SUPPORTED_READING_TYPES,
+    MirrorUsagePointMrids,
+    create_location_mup,
+    generate_mup_mrids,
+    generate_reading_type_values,
+    generate_role_flags,
+    ocpp_metadata_to_sep2,
+    ocpp_readings_to_submit_mmr,
+    previous_post_period,
+    value_to_sep2,
+)
+from cactus_juice.model import OCPPMetadata, OCPPReading
 
 logger = logging.getLogger(__name__)
 
 MIN_DATE = datetime(1000, 1, 1, tzinfo=UTC)  # We just want a TZ aware "minimum" date
 DEFAULT_POLL_RATE = timedelta(minutes=15)
 DEFAULT_POST_RATE_SECONDS = 900  # 15 minutes
-
-SUPPORTED_READING_TYPES = [
-    CSIPAusReadingType.ActivePowerAverage,
-    CSIPAusReadingType.ReactivePowerAverage,
-    CSIPAusReadingType.VoltageSinglePhaseAverage,
-    CSIPAusReadingType.FrequencyAverage,
-]
-POW10_BY_READING_TYPE = {
-    CSIPAusReadingType.ActivePowerAverage: 0,
-    CSIPAusReadingType.ReactivePowerAverage: 0,
-    CSIPAusReadingType.VoltageSinglePhaseAverage: -1,
-    CSIPAusReadingType.FrequencyAverage: -3,
-}
 
 
 @dataclass(slots=True)
@@ -90,14 +97,15 @@ class ClientState:
     derl_last_poll: datetime  # DERList
     derl_poll_rate: timedelta  # DERList
     derl_href: str | None  # DERList href - We only have 1 to manage as we only manage a single EndDevice
+    derl_last_change_time: datetime | None  # The last changed time - used for identifying changes
 
     derpl_last_poll: datetime  # DERProgramList
     derpl_poll_rate: timedelta  # DERProgramList - We will NOT support unique pollRates per DERProgram list
-    derpl_href: list[str]  # DERProgramList href - We may have multiple lists via FSAs
+    derpl_hrefs: list[str]  # DERProgramList href - We may have multiple lists via FSAs
 
     tpl_last_poll: datetime  # TariffProfileList
     tpl_poll_rate: timedelta  # TariffProfileList - We will NOT support unique pollRates per TariffProfileList list
-    tpl_href: list[str]  # TariffProfileList href - We may have multiple lists via FSAs
+    tpl_hrefs: list[str]  # TariffProfileList href - We may have multiple lists via FSAs
 
     @staticmethod
     def new_instance(context: CSIPAusContext, db: DatabaseConnection) -> "ClientState":
@@ -136,12 +144,13 @@ class ClientState:
             derl_last_poll=MIN_DATE,
             derl_poll_rate=DEFAULT_POLL_RATE,
             derl_href=None,
+            derl_last_change_time=None,
             derpl_last_poll=MIN_DATE,
             derpl_poll_rate=DEFAULT_POLL_RATE,
-            derpl_href=[],
+            derpl_hrefs=[],
             tpl_last_poll=MIN_DATE,
             tpl_poll_rate=DEFAULT_POLL_RATE,
-            tpl_href=[],
+            tpl_hrefs=[],
         )
 
 
@@ -210,6 +219,14 @@ async def in_band_register(state: ClientState, end_device_list_href: str) -> End
                 state.context.http, HTTPMethod.POST, end_device_list_href, ConnectionPointRequest(id=state.context.nmi)
             )
 
+    # Mark certain resources as requiring an update after we register an EndDevice
+    state.derl_last_poll = MIN_DATE
+    state.mupl_last_poll = MIN_DATE
+    state.mupl_last_post = MIN_DATE
+    state.fsal_last_poll = MIN_DATE
+    state.derpl_last_poll = MIN_DATE
+    state.tpl_last_poll = MIN_DATE
+
     return created_edev
 
 
@@ -250,53 +267,6 @@ async def poll_end_device_list(state: ClientState, now: datetime) -> None:
     state.edevl_last_poll = now
 
 
-async def create_location_mup(
-    state: ClientState, mup_list_href: str, location: CSIPAusReadingLocation, mrids: MirrorUsagePointMrids
-) -> MirrorUsagePoint:
-    """Creates a MUP for the specified location, POST's it and returns the href"""
-
-    role_flags = generate_role_flags(location)
-
-    mmrs: list[MirrorMeterReading] = []
-    for rt, mmr_mrid in mrids.mmr_mrids.items():
-        uom, kind, dq = generate_reading_type_values(rt)
-
-        # The device sign differs from the site sign
-        flow_dir = FlowDirectionType.FORWARD if location == CSIPAusReadingLocation.Site else FlowDirectionType.REVERSE
-
-        pow10 = POW10_BY_READING_TYPE[rt]
-
-        mmrs.append(
-            MirrorMeterReading(
-                mRID=mmr_mrid,
-                readingType=ReadingType(
-                    uom=uom,
-                    kind=kind,
-                    dataQualifier=dq,
-                    flowDirection=flow_dir,
-                    powerOfTenMultiplier=pow10,
-                ),
-            )
-        )
-
-    mup_href = await submit_resource(
-        state.context.http,
-        HTTPMethod.POST,
-        mup_list_href,
-        MirrorUsagePointRequest(
-            roleFlags=f"{int(role_flags):04X}",
-            deviceLFDI=state.context.edev_lfdi,
-            mRID=mrids.mup_mrid,
-            status=1,
-            mirrorMeterReadings=mmrs,
-            serviceCategoryKind=ServiceKind.ELECTRICITY,
-        ),
-    )
-
-    logger.info(f"Created MUP {mup_href} for {location} with mRID {mrids.mup_mrid} and {len(mmrs)} MMRs")
-    return await get_resource(MirrorUsagePoint, state.context.http, mup_href)
-
-
 async def poll_mup_list(state: ClientState, now: datetime) -> None:
     """Polls the MirrorUsagePointList - ensures the existence of MUPs for the EndDevice"""
 
@@ -322,20 +292,29 @@ async def poll_mup_list(state: ClientState, now: datetime) -> None:
         mups.items, state.mup_site_mrids.mup_mrid, lambda mup: cast(MirrorUsagePoint, mup).mRID
     )
     if site_mup is None:
-        site_mup = await create_location_mup(state, state.mupl_href, CSIPAusReadingLocation.Site, state.mup_site_mrids)
-        if site_mup.href is None:
-            raise RemoteServiceError("Received a MirrorUsagePoint with no href")
-        state.mup_href_by_location[CSIPAusReadingLocation.Site] = site_mup.href
+        mup_href = await submit_resource(
+            state.context.http,
+            HTTPMethod.POST,
+            state.mupl_href,
+            create_location_mup(CSIPAusReadingLocation.Site, state.mup_site_mrids, state.context.edev_lfdi),
+        )
+        logger.info(f"Created Site MUP {mup_href} with mRID {state.mup_site_mrids.mup_mrid}")
+        site_mup = await get_resource(MirrorUsagePoint, state.context.http, mup_href)
+        state.mup_href_by_location[CSIPAusReadingLocation.Site] = mup_href
+
     device_mup = first_matching_caseless(
         mups.items, state.mup_device_mrids.mup_mrid, lambda mup: cast(MirrorUsagePoint, mup).mRID
     )
     if device_mup is None:
-        device_mup = await create_location_mup(
-            state, state.mupl_href, CSIPAusReadingLocation.Device, state.mup_device_mrids
+        mup_href = await submit_resource(
+            state.context.http,
+            HTTPMethod.POST,
+            state.mupl_href,
+            create_location_mup(CSIPAusReadingLocation.Device, state.mup_device_mrids, state.context.edev_lfdi),
         )
-        if device_mup.href is None:
-            raise RemoteServiceError("Received a MirrorUsagePoint with no href")
-        state.mup_href_by_location[CSIPAusReadingLocation.Device] = device_mup.href
+        logger.info(f"Created Device MUP {mup_href} with mRID {state.mup_device_mrids.mup_mrid}")
+        device_mup = await get_resource(MirrorUsagePoint, state.context.http, mup_href)
+        state.mup_href_by_location[CSIPAusReadingLocation.Device] = mup_href
 
     # Update state
     if mups.poll_rate_seconds:
@@ -348,92 +327,6 @@ async def poll_mup_list(state: ClientState, now: datetime) -> None:
         seconds=min(device_mup.postRate or DEFAULT_POST_RATE_SECONDS, site_mup.postRate or DEFAULT_POST_RATE_SECONDS)
     )
     state.mupl_last_poll = now
-
-
-def average_readings(readings: Iterable[OCPPReading], key: Callable[[OCPPReading], float | None]) -> float | None:
-    total = 0.0
-    count = 0
-    for r in readings:
-        val = key(r)
-        if val is None:
-            continue
-
-        total += val
-        count += 1
-
-    if count == 0:
-        return None
-    else:
-        return total / count
-
-
-def _append_mmr_value(
-    mmrs: list[MirrorMeterReading],
-    mrids: MirrorUsagePointMrids,
-    rt: CSIPAusReadingType,
-    value: float | None,
-    start: datetime,
-    duration: timedelta,
-) -> None:
-    """Adds an entry to mmrs if there is a MMR value to transmit"""
-    mrid = mrids.mmr_mrids.get(rt)
-    if mrid is not None and value is not None:
-        mmrs.append(
-            MirrorMeterReading(
-                mRID=mrid,
-                reading=Reading(
-                    value=value_to_sep2(value, POW10_BY_READING_TYPE[rt]),
-                    timePeriod=DateTimeIntervalType(
-                        duration=int(duration.total_seconds()), start=int(start.timestamp())
-                    ),
-                ),
-            )
-        )
-
-
-async def post_site_readings(state: ClientState, session: AsyncSession, now: datetime, site_mup_href: str) -> None:
-    """Goes to the database and looks for all ocpp readings within the previous postRate window, averages them
-    and then sends them to the site level MUP"""
-    readings_from = previous_post_period(now, state.mupl_post_rate)
-    readings_to = readings_from + state.mupl_post_rate
-    all_readings = await fetch_ocpp_readings_in_range(session, readings_from, readings_to)
-
-    avg_import_watts = average_readings(all_readings, lambda r: r.import_active_power_watts)
-    avg_export_watts = average_readings(all_readings, lambda r: r.export_active_power_watts)
-    avg_watts = (avg_import_watts or 0.0) - (avg_export_watts or 0.0)
-
-    avg_import_var = average_readings(all_readings, lambda r: r.import_reactive_power_var)
-    avg_export_var = average_readings(all_readings, lambda r: r.export_reactive_power_var)
-    avg_var = (avg_import_var or 0.0) - (avg_export_var or 0.0)
-
-    avg_volts = average_readings(all_readings, lambda r: r.voltage_volts)
-    avg_hz = average_readings(all_readings, lambda r: r.frequency_hz)
-
-    # Build our post packet for site readings (we will do everything at the site level)
-    mmrs: list[MirrorMeterReading] = []
-    postrate = state.mupl_post_rate
-    site_mrids = state.mup_site_mrids
-    _append_mmr_value(mmrs, site_mrids, CSIPAusReadingType.ActivePowerAverage, avg_watts, readings_from, postrate)
-    _append_mmr_value(mmrs, site_mrids, CSIPAusReadingType.ReactivePowerAverage, avg_var, readings_from, postrate)
-    _append_mmr_value(
-        mmrs, site_mrids, CSIPAusReadingType.VoltageSinglePhaseAverage, avg_volts, readings_from, postrate
-    )
-    _append_mmr_value(mmrs, site_mrids, CSIPAusReadingType.VoltageSinglePhaseAverage, avg_hz, readings_from, postrate)
-
-    # Send the readings
-    if len(mmrs) == 0:
-        logger.info(f"No readings from {readings_from} to {readings_to} to submit to {site_mup_href}")
-    else:
-        logger.info(
-            f"Submitting {len(mmrs)} MMRs for readings from {readings_from} to {readings_to} to {site_mup_href}"
-        )
-        await submit_resource(
-            state.context.http,
-            HTTPMethod.POST,
-            site_mup_href,
-            MirrorMeterReadingListRequest(mirrorMeterReadings=mmrs),
-            no_location_header=True,
-        )
 
 
 async def post_mup_list(state: ClientState, session: AsyncSession, now: datetime) -> None:
@@ -451,7 +344,31 @@ async def post_mup_list(state: ClientState, session: AsyncSession, now: datetime
         logger.info(f"No MirrorUsagePoint for Device/Site location(s). Skipping readings {state.mup_href_by_location}")
         state.mupl_last_post = now  # We count this as a post
         return
-    await post_site_readings(state, session, now, site_mup_href)
+
+    readings_from = previous_post_period(now, state.mupl_post_rate)
+    readings_to = readings_from + state.mupl_post_rate
+    all_readings = await fetch_ocpp_readings_in_range(session, readings_from, readings_to)
+
+    site_readings, device_readings = ocpp_readings_to_submit_mmr(
+        readings_from, readings_to, all_readings, state.mup_site_mrids, state.mup_device_mrids
+    )
+
+    # Send the readings
+    if site_readings is None:
+        logger.info(f"No site readings from {readings_from} to {readings_to} to submit to {site_mup_href}")
+    else:
+        logger.info(f"Submitting site readings from {readings_from} to {readings_to} to {site_mup_href}")
+        await submit_resource(
+            state.context.http, HTTPMethod.POST, site_mup_href, site_readings, no_location_header=True
+        )
+
+    if device_readings is None:
+        logger.info(f"No device readings from {readings_from} to {readings_to} to submit to {site_mup_href}")
+    else:
+        logger.info(f"Submitting device readings from {readings_from} to {readings_to} to {site_mup_href}")
+        await submit_resource(
+            state.context.http, HTTPMethod.POST, device_mup_href, device_readings, no_location_header=True
+        )
 
     # update state
     state.mupl_last_post = now
@@ -459,5 +376,149 @@ async def post_mup_list(state: ClientState, session: AsyncSession, now: datetime
 
 async def post_der_metadata(state: ClientState, session: AsyncSession, now: datetime) -> None:
     """Updates the DER Metadata (DERSettings, DERStatus, DERCapability) based on what in the DB"""
+
+    if state.edev_href is None:
+        logger.info("No EndDevice registered - unable to poll DERList.")
+        return
+
+    if state.derl_href is None:
+        logger.info("No DERList href discovered - unable to poll.")
+        return
+
+    # Get DER
+    der_items = await paginate_list_resource_items(
+        DERListResponse, state.context.http, state.derl_href, 100, lambda derl: cast(DERListResponse, derl).DER_
+    )
+
+    if not der_items.items:
+        logger.info("No DER entry in DERList - unable to update DERList.")
+        state.derl_last_poll = now
+        return
+
+    # Get metadata
+    metadata = await fetch_ocpp_metadata(session)
+    if metadata is None:
+        logger.info("No device metadata available - unable to update DERList.")
+        state.derl_last_poll = now
+        return
+
+    if metadata.created_at == state.derl_last_change_time:
+        logger.info("Device metadata the same as previous poll. Skipping updates.")
+        state.derl_last_poll = now
+        return
+
+    # Update DERCapability / DERSettings / DERStatus
+    der = der_items.items[0]
+    capability, settings, status = ocpp_metadata_to_sep2(metadata)
+
+    if capability is not None:
+        if der.DERCapabilityLink is None:
+            logger.info(f"No DERCapabilityLink for der {der.href} in {state.derl_href}. Skipping update")
+        else:
+            logger.info(f"Updating DERCapability for der {der.href} in {state.derl_href}.")
+            await submit_resource(
+                state.context.http, HTTPMethod.PUT, der.DERCapabilityLink.href, capability, no_location_header=True
+            )
+
+    if settings is not None:
+        if der.DERSettingsLink is None:
+            logger.info(f"No DERSettingsLink for der {der.href} in {state.derl_href}. Skipping update")
+        else:
+            logger.info(f"Updating DERSettings for der {der.href} in {state.derl_href}.")
+            await submit_resource(
+                state.context.http, HTTPMethod.PUT, der.DERSettingsLink.href, settings, no_location_header=True
+            )
+
+    if status is not None:
+        if der.DERStatusLink is None:
+            logger.info(f"No DERStatusLink for der {der.href} in {state.derl_href}. Skipping update")
+        else:
+            logger.info(f"Updating DERStatus for der {der.href} in {state.derl_href}.")
+            await submit_resource(
+                state.context.http, HTTPMethod.PUT, der.DERStatusLink.href, status, no_location_header=True
+            )
+
+    # Update state
+    state.derl_last_poll = now
+    state.derl_last_change_time = metadata.created_at
+
+
+async def poll_fsa_list(state: ClientState, now: datetime) -> None:
+    """Polls an EndDevice FunctionSetAssignmentList - updating the DERProgramList / TariffProfileList hrefs"""
+    if state.edev_href is None:
+        logger.info("No EndDevice registered - unable to poll FunctionSetAssignmentList.")
+        return
+
+    if state.fsal_href is None:
+        logger.info("No FunctionSetAssignmentList href discovered - unable to poll.")
+        return
+
+    fsas = await paginate_list_resource_items(
+        FunctionSetAssignmentsListResponse,
+        state.context.http,
+        state.fsal_href,
+        100,
+        lambda fsal: cast(FunctionSetAssignmentsListResponse, fsal).FunctionSetAssignments,
+    )
+
+    # Update state
+    state.fsal_poll_rate = (
+        state.dcap_poll_rate if fsas.poll_rate_seconds is None else timedelta(seconds=fsas.poll_rate_seconds)
+    )
+    state.fsal_last_poll = now
+
+    derpl_hrefs = [fsa.DERProgramListLink.href for fsa in fsas.items if fsa.DERProgramListLink is not None]
+    if derpl_hrefs != state.derpl_hrefs:
+        logger.info(f"Updating DERProgramList hrefs from {state.derpl_hrefs} to {derpl_hrefs}")
+        state.derpl_hrefs = derpl_hrefs
+        state.derpl_last_poll = MIN_DATE  # Trigger an immediate poll on change
+
+    tp_hrefs = [fsa.TariffProfileListLink.href for fsa in fsas.items if fsa.TariffProfileListLink is not None]
+    if derpl_hrefs != state.derpl_hrefs:
+        logger.info(f"Updating TariffProfileList hrefs from {state.tpl_hrefs} to {tp_hrefs}")
+        state.tpl_hrefs = tp_hrefs
+        state.tpl_last_poll = MIN_DATE  # Trigger an immediate poll on change
+
+
+async def poll_derprogram_list(state: ClientState, session: AsyncSession, now: datetime) -> None:
+    """Polls the current DERProgram lists - writing/updating any controls into the DB"""
+
+    if state.edev_href is None:
+        logger.info("No EndDevice registered - unable to poll DERProgramList.")
+        return
+
+    if not state.derpl_hrefs:
+        logger.info("No DERProgramList href(s) discovered - unable to poll.")
+        return
+
+    # Walk all the DERPrograms
+    all_poll_rates: list[int | None] = []
+    all_default_primacies: list[tuple[int, DefaultDERControl]] = []
+    for derpl_href in state.derpl_hrefs:
+        derps = await paginate_list_resource_items(
+            DERProgramListResponse,
+            state.context.http,
+            derpl_href,
+            100,
+            lambda derpl: cast(DERProgramListResponse, derpl).DERProgram,
+        )
+        all_poll_rates.append(derps.poll_rate_seconds)
+        for derp in derps.items:
+            # Fetch the DefaultDERControl
+            if derp.DefaultDERControlLink is not None:
+                logger.info(f"Fetching DefaultDERControl {derp.DefaultDERControlLink.href} for DERProgram {derp.href}")
+                dderc = await get_resource(DefaultDERControl, state.context.http, derp.DefaultDERControlLink.href)
+                all_default_primacies.append((derp.primacy, dderc))
+
+            # Fetch the DERControls
+            if derp.DERControlListLink is not None:
+                logger.info(f"Fetching DERControls {derp.DERControlListLink.href} for DERProgram {derp.href}")
+                dercs = await paginate_list_resource_items(
+                    DERControlListResponse,
+                    state.context.http,
+                    derp.DERControlListLink.href,
+                    100,
+                    lambda dercl: cast(DERControlListResponse, dercl).DERControl,
+                )
 
     raise NotImplementedError()
