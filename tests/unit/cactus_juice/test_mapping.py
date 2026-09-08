@@ -4,29 +4,41 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from assertical.asserts.type import assert_dict_type
+from assertical.fake.generator import generate_class_instance
 from cactus_test_definitions.csipaus import (
     CSIPAusReadingLocation,
     CSIPAusReadingType,
 )
+from envoy_schema.server.schema.sep2.der import DefaultDERControl, DERCapability, DERControlBase, DERSettings, DERStatus
 from envoy_schema.server.schema.sep2.der_control_types import ActivePower
+from envoy_schema.server.schema.sep2.metering_mirror import MirrorMeterReadingListRequest, MirrorUsagePointRequest
 from envoy_schema.server.schema.sep2.types import (
     DataQualifierType,
+    FlowDirectionType,
     KindType,
+    ServiceKind,
     UomType,
 )
 
+from cactus_juice.csipaus.dto import DefaultValues
 from cactus_juice.error import BaseJuiceError
 from cactus_juice.mapping import (
+    SUPPORTED_READING_TYPES,
     MirrorUsagePointMrids,
+    create_location_mup,
+    default_dercontrols_to_values,
     generate_hashed_mrid,
     generate_mmr_mrids,
     generate_mup_mrids,
     generate_reading_type_values,
     generate_role_flags,
+    ocpp_metadata_to_sep2,
+    ocpp_readings_to_submit_mmr,
     previous_post_period,
     sep2_to_value,
     value_to_sep2,
 )
+from cactus_juice.model import OCPPMetadata, OCPPReading
 
 
 def assert_mrid(mrid: str, pen: int | None):
@@ -350,3 +362,395 @@ def test_sep2_to_value(sep2_val: ActivePower | None, expected: float | None):
     else:
         assert isinstance(actual, float) or isinstance(actual, int)
         assert actual == pytest.approx(expected)
+
+
+# ---------------------------------------------------------------------------
+# ocpp_metadata_to_sep2
+# ---------------------------------------------------------------------------
+
+_METADATA_MEASUREMENT_FIELDS = (
+    "max_voltage_volts",
+    "min_voltage_volts",
+    "max_power_watts",
+    "max_charge_rate_watts",
+    "max_discharge_rate_watts",
+    "set_grad_w",
+)
+
+
+def _metadata(**overrides: float | None) -> OCPPMetadata:
+    """An OCPPMetadata with every nullable measurement field defaulting to None (override as needed)."""
+    metadata = generate_class_instance(OCPPMetadata, seed=101)
+    for field in _METADATA_MEASUREMENT_FIELDS:
+        setattr(metadata, field, overrides.get(field))
+    return metadata
+
+
+def test_ocpp_metadata_to_sep2_without_max_power():
+    """No max_power_watts -> no capability/settings, but always a DERStatus."""
+    metadata = _metadata(max_power_watts=None)
+
+    capability, settings, status = ocpp_metadata_to_sep2(metadata)
+
+    assert capability is None
+    assert settings is None
+    assert isinstance(status, DERStatus)
+    assert status.alarmStatus == "00"
+    assert status.readingTime == int(metadata.created_at.timestamp())
+
+
+def test_ocpp_metadata_to_sep2_minimal_max_power():
+    """max_power_watts set but every optional rating absent - must not blow up on the None -> None helpers."""
+    metadata = _metadata(max_power_watts=5000.0, set_grad_w=None)
+
+    capability, settings, status = ocpp_metadata_to_sep2(metadata)
+
+    assert isinstance(capability, DERCapability)
+    assert isinstance(settings, DERSettings)
+    assert isinstance(status, DERStatus)
+
+    # Mandatory bits are populated from max_power_watts
+    assert capability.rtgMaxW is not None
+    assert settings.setMaxW is not None
+
+    # Optionals fed by absent metadata stay None
+    assert capability.rtgMaxV is None
+    assert capability.rtgMinV is None
+    assert capability.rtgMaxChargeRateW is None
+    assert capability.rtgMaxDischargeRateW is None
+    assert settings.setMaxV is None
+    assert settings.setMinV is None
+    assert settings.setMaxChargeRateW is None
+    assert settings.setMaxDischargeRateW is None
+
+    # set_grad_w is None -> documented hardcoded fallback
+    assert settings.setGradW == 27
+    assert settings.updatedTime == int(metadata.created_at.timestamp())
+    assert status.readingTime == int(metadata.created_at.timestamp())
+
+
+def test_ocpp_metadata_to_sep2_full_values():
+    """Every metadata field supplied (incl. a non-integer set_grad_w) maps without error."""
+    metadata = _metadata(
+        max_voltage_volts=253.0,
+        min_voltage_volts=207.0,
+        max_power_watts=10000.0,
+        max_charge_rate_watts=7000.0,
+        max_discharge_rate_watts=6000.0,
+        set_grad_w=12.7,
+    )
+
+    capability, settings, status = ocpp_metadata_to_sep2(metadata)
+
+    assert isinstance(capability, DERCapability)
+    assert isinstance(settings, DERSettings)
+    assert isinstance(status, DERStatus)
+
+    assert capability.rtgMaxV is not None
+    assert capability.rtgMinV is not None
+    assert capability.rtgMaxChargeRateW is not None
+    assert capability.rtgMaxDischargeRateW is not None
+    assert settings.setMaxV is not None
+    assert settings.setMinV is not None
+    assert settings.setMaxChargeRateW is not None
+    assert settings.setMaxDischargeRateW is not None
+
+    # float set_grad_w is truncated to int
+    assert settings.setGradW == 12
+    assert isinstance(settings.setGradW, int)
+    assert status.alarmStatus == "00"
+
+
+def test_ocpp_metadata_to_sep2_negative_values():
+    """Negative ratings should still round-trip through the int() conversions without raising."""
+    metadata = _metadata(max_power_watts=-4200.0, max_charge_rate_watts=-1000.0, set_grad_w=-5.0)
+
+    capability, settings, _ = ocpp_metadata_to_sep2(metadata)
+
+    assert isinstance(capability, DERCapability)
+    assert isinstance(settings, DERSettings)
+    assert capability.rtgMaxW is not None
+    assert settings.setGradW == -5
+
+
+# ---------------------------------------------------------------------------
+# create_location_mup
+# ---------------------------------------------------------------------------
+
+_VALID_LFDI = "0F" * 20  # 40 hex chars - deviceLFDI is validated as hex by the schema
+
+
+@pytest.mark.parametrize(
+    "location, expected_flow",
+    [
+        (CSIPAusReadingLocation.Site, FlowDirectionType.FORWARD),
+        (CSIPAusReadingLocation.Device, FlowDirectionType.REVERSE),
+    ],
+)
+def test_create_location_mup_builds_request(location: CSIPAusReadingLocation, expected_flow: FlowDirectionType):
+    mrids = generate_mup_mrids(location, SUPPORTED_READING_TYPES, 12345678)
+
+    mup = create_location_mup(location, mrids, _VALID_LFDI)
+
+    assert isinstance(mup, MirrorUsagePointRequest)
+    assert mup.mRID == mrids.mup_mrid
+    assert mup.deviceLFDI == _VALID_LFDI
+    assert mup.serviceCategoryKind == ServiceKind.ELECTRICITY
+    assert re.fullmatch(r"[0-9A-F]{4}", mup.roleFlags), "roleFlags should be 4 uppercase hex chars"
+
+    assert mup.mirrorMeterReadings is not None
+    assert len(mup.mirrorMeterReadings) == len(SUPPORTED_READING_TYPES)
+    mrids_seen = {mmr.mRID for mmr in mup.mirrorMeterReadings}
+    assert mrids_seen == set(mrids.mmr_mrids.values()), "each supported reading type gets its own MMR"
+    for mmr in mup.mirrorMeterReadings:
+        assert mmr.readingType is not None
+        assert mmr.readingType.flowDirection == expected_flow
+
+
+def test_create_location_mup_site_and_device_differ():
+    """Site vs Device must not collapse to the same role flags / flow direction (copy-paste guard)."""
+    mrids = generate_mup_mrids(CSIPAusReadingLocation.Site, SUPPORTED_READING_TYPES, 12345678)
+
+    site = create_location_mup(CSIPAusReadingLocation.Site, mrids, _VALID_LFDI)
+    device = create_location_mup(CSIPAusReadingLocation.Device, mrids, _VALID_LFDI)
+
+    assert site.roleFlags != device.roleFlags
+    assert site.mirrorMeterReadings is not None and device.mirrorMeterReadings is not None
+    site_rt = site.mirrorMeterReadings[0].readingType
+    device_rt = device.mirrorMeterReadings[0].readingType
+    assert site_rt is not None and device_rt is not None
+    assert site_rt.flowDirection != device_rt.flowDirection
+
+
+def test_create_location_mup_no_reading_types():
+    """An empty mmr_mrids map still yields a valid request with no readings."""
+    mrids = MirrorUsagePointMrids(mup_mrid=generate_hashed_mrid("mup", 1), mmr_mrids={})
+
+    mup = create_location_mup(CSIPAusReadingLocation.Site, mrids, _VALID_LFDI)
+
+    assert mup.mirrorMeterReadings == []
+
+
+def test_create_location_mup_bad_location():
+    mrids = generate_mup_mrids(CSIPAusReadingLocation.Site, SUPPORTED_READING_TYPES, 1)
+    with pytest.raises(BaseJuiceError):
+        create_location_mup("not a location", mrids, _VALID_LFDI)  # type: ignore
+
+
+def test_create_location_mup_bad_reading_type():
+    mrids = MirrorUsagePointMrids(
+        mup_mrid=generate_hashed_mrid("mup", 1),
+        mmr_mrids={"not a reading type": generate_hashed_mrid("mmr", 1)},  # type: ignore
+    )
+    with pytest.raises(BaseJuiceError):
+        create_location_mup(CSIPAusReadingLocation.Site, mrids, _VALID_LFDI)
+
+
+# ---------------------------------------------------------------------------
+# ocpp_readings_to_submit_mmr
+# ---------------------------------------------------------------------------
+
+_RF = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+_RT = datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC)
+
+_READING_MEASUREMENT_FIELDS = (
+    "frequency_hz",
+    "import_active_power_watts",
+    "export_active_power_watts",
+    "import_reactive_power_var",
+    "export_reactive_power_var",
+    "soc_percent",
+    "voltage_volts",
+)
+
+
+def _reading(**overrides: float | None) -> OCPPReading:
+    """An OCPPReading with every nullable measurement field defaulting to None (override as needed)."""
+    reading = generate_class_instance(OCPPReading, seed=202)
+    for field in _READING_MEASUREMENT_FIELDS:
+        setattr(reading, field, overrides.get(field))
+    return reading
+
+
+def _site_mrids() -> MirrorUsagePointMrids:
+    return generate_mup_mrids(CSIPAusReadingLocation.Site, SUPPORTED_READING_TYPES, 12345678)
+
+
+def test_ocpp_readings_to_submit_mmr_empty():
+    mrids = _site_mrids()
+    assert ocpp_readings_to_submit_mmr(_RF, _RT, [], mrids, mrids) == (None, None)
+
+
+def test_ocpp_readings_to_submit_mmr_averages_and_shape():
+    mrids = _site_mrids()
+    readings = [
+        _reading(import_active_power_watts=80.0, export_active_power_watts=40.0, import_reactive_power_var=8.0),
+        _reading(import_active_power_watts=120.0, export_active_power_watts=40.0, import_reactive_power_var=4.0),
+    ]
+
+    site, device = ocpp_readings_to_submit_mmr(_RF, _RT, readings, mrids, mrids)
+
+    assert device is None, "device level readings are never mapped"
+    assert isinstance(site, MirrorMeterReadingListRequest)
+    assert site.mirrorMeterReadings is not None
+
+    by_mrid = {mmr.mRID: mmr for mmr in site.mirrorMeterReadings}
+    active = by_mrid[mrids.mmr_mrids[CSIPAusReadingType.ActivePowerAverage]]
+    reactive = by_mrid[mrids.mmr_mrids[CSIPAusReadingType.ReactivePowerAverage]]
+    assert active.reading is not None and reactive.reading is not None
+    assert active.reading.timePeriod is not None
+
+    # avg import 100 - avg export 40 = 60, pow10 == 0
+    assert active.reading.value == 60
+    # avg import var 6 - avg export var 0 = 6
+    assert reactive.reading.value == 6
+    assert active.reading.timePeriod.duration == int((_RT - _RF).total_seconds())
+    assert active.reading.timePeriod.start == int(_RF.timestamp())
+
+
+def test_ocpp_readings_to_submit_mmr_no_matching_mrids():
+    """Readings present but the MUP has no MMR mrids -> nothing to submit."""
+    empty = MirrorUsagePointMrids(mup_mrid=generate_hashed_mrid("mup", 1), mmr_mrids={})
+    readings = [_reading(import_active_power_watts=100.0)]
+
+    assert ocpp_readings_to_submit_mmr(_RF, _RT, readings, empty, empty) == (None, None)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="copy-paste bug in ocpp_readings_to_submit_mmr: avg_hz is appended under "
+    "CSIPAusReadingType.VoltageSinglePhaseAverage instead of FrequencyAverage, so the frequency "
+    "reading is emitted with the voltage mRID/scaling and the frequency mRID is never used",
+)
+def test_ocpp_readings_to_submit_mmr_frequency_uses_its_own_mrid():
+    mrids = _site_mrids()
+    readings = [
+        _reading(
+            import_active_power_watts=100.0,
+            export_active_power_watts=0.0,
+            import_reactive_power_var=10.0,
+            export_reactive_power_var=0.0,
+            voltage_volts=240.0,
+            frequency_hz=50.0,
+        )
+    ]
+
+    site, _ = ocpp_readings_to_submit_mmr(_RF, _RT, readings, mrids, mrids)
+    assert site is not None
+    assert site.mirrorMeterReadings is not None
+
+    mrids_seen = [mmr.mRID for mmr in site.mirrorMeterReadings]
+    assert len(mrids_seen) == len(set(mrids_seen)), "every reading type should map to a distinct MMR mRID"
+    assert mrids.mmr_mrids[CSIPAusReadingType.FrequencyAverage] in mrids_seen
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="ocpp_readings_to_submit_mmr iterates all_readings once per measurement; a one-shot "
+    "generator is exhausted after the first average and every later reading type is lost",
+)
+def test_ocpp_readings_to_submit_mmr_accepts_a_generator():
+    mrids = _site_mrids()
+    readings = [_reading(voltage_volts=240.0), _reading(voltage_volts=240.0)]
+
+    site, _ = ocpp_readings_to_submit_mmr(_RF, _RT, (r for r in readings), mrids, mrids)
+    assert site is not None
+    assert site.mirrorMeterReadings is not None
+
+    volt_mrid = mrids.mmr_mrids[CSIPAusReadingType.VoltageSinglePhaseAverage]
+    assert any(mmr.mRID == volt_mrid for mmr in site.mirrorMeterReadings)
+
+
+# ---------------------------------------------------------------------------
+# default_dercontrols_to_values
+# ---------------------------------------------------------------------------
+
+
+def _dderc(primacy: int, *, set_grad_w: int | None = None, **base_kwargs: object) -> tuple[int, DefaultDERControl]:
+    base = generate_class_instance(DERControlBase, optional_is_none=True)
+    base = base.model_copy(update=dict(base_kwargs))
+    dderc = generate_class_instance(DefaultDERControl, optional_is_none=True, DERControlBase_=base, setGradW=set_grad_w)
+    return (primacy, dderc)
+
+
+def test_default_dercontrols_to_values_empty():
+    result = default_dercontrols_to_values([])
+
+    assert result == DefaultValues(
+        connect=None,
+        energize=None,
+        import_limit_watts=None,
+        export_limit_watts=None,
+        load_limit_watts=None,
+        generation_limit_watts=None,
+        storage_target_watts=None,
+        ramp_percent_max_second_hundredths=None,
+    )
+
+
+def test_default_dercontrols_to_values_field_mapping():
+    """Each DERControlBase field must land in its own DefaultValues slot (copy-paste guard)."""
+    entry = _dderc(
+        1,
+        set_grad_w=77,
+        opModConnect=True,
+        opModEnergize=False,
+        opModImpLimW=ActivePower(multiplier=0, value=111),
+        opModExpLimW=ActivePower(multiplier=0, value=222),
+        opModLoadLimW=ActivePower(multiplier=0, value=333),
+        opModGenLimW=ActivePower(multiplier=0, value=444),
+        opModStorageTargetW=ActivePower(multiplier=0, value=555),
+    )
+
+    result = default_dercontrols_to_values([entry])
+
+    assert result == DefaultValues(
+        connect=True,
+        energize=False,
+        import_limit_watts=111,
+        export_limit_watts=222,
+        load_limit_watts=333,
+        generation_limit_watts=444,
+        storage_target_watts=555,
+        ramp_percent_max_second_hundredths=77,
+    )
+
+
+def test_default_dercontrols_to_values_applies_multiplier():
+    entry = _dderc(1, opModImpLimW=ActivePower(multiplier=2, value=3))
+
+    result = default_dercontrols_to_values([entry])
+
+    assert result.import_limit_watts == 300
+    assert isinstance(result.import_limit_watts, int)
+
+
+def test_default_dercontrols_to_values_lower_primacy_wins():
+    """Lower primacy == higher priority, so it should overwrite a higher-primacy value."""
+    high_primacy = _dderc(10, opModConnect=True, opModImpLimW=ActivePower(multiplier=0, value=100))
+    low_primacy = _dderc(1, opModConnect=False, opModImpLimW=ActivePower(multiplier=0, value=999))
+
+    # order of the input iterable should not matter
+    result = default_dercontrols_to_values([high_primacy, low_primacy])
+    result_reversed = default_dercontrols_to_values([low_primacy, high_primacy])
+
+    assert result == result_reversed
+    assert result.connect is False
+    assert result.import_limit_watts == 999
+
+
+def test_default_dercontrols_to_values_merges_unset_fields():
+    """A lower-priority control still contributes fields the higher-priority one leaves unset."""
+    high_primacy = _dderc(10, opModConnect=True)  # only connect
+    low_primacy = _dderc(1, opModEnergize=True, opModExpLimW=ActivePower(multiplier=0, value=250))
+
+    result = default_dercontrols_to_values([high_primacy, low_primacy])
+
+    assert result.connect is True  # only set by the low-priority control
+    assert result.energize is True
+    assert result.export_limit_watts == 250
+
+
+def test_default_dercontrols_to_values_setgradw_is_optional():
+    assert default_dercontrols_to_values([_dderc(1, set_grad_w=None)]).ramp_percent_max_second_hundredths is None
+    assert default_dercontrols_to_values([_dderc(1, set_grad_w=15)]).ramp_percent_max_second_hundredths == 15
