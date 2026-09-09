@@ -47,7 +47,11 @@ dependencies = [
     "cactus-test-definitions",
     "uvicorn[standard]>=0.52.4",
     "python-multipart>=0.0.32",
+    "click",
 ]
+
+[project.scripts]
+juice = "cactus_juice.cli:main"
 
 [project.optional-dependencies]
 dev = ["alembic", "bandit", "ty", "ruff", "codespell", "coverage", "pytest-cov", "python-dotenv[cli]", "lxml-stubs"]

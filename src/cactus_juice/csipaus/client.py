@@ -457,9 +457,9 @@ async def post_mup_list(state: ClientState, session: AsyncSession, now: datetime
         )
 
     if device_readings is None:
-        logger.info(f"No device readings from {readings_from} to {readings_to} to submit to {site_mup_href}")
+        logger.info(f"No device readings from {readings_from} to {readings_to} to submit to {device_mup_href}")
     else:
-        logger.info(f"Submitting device readings from {readings_from} to {readings_to} to {site_mup_href}")
+        logger.info(f"Submitting device readings from {readings_from} to {readings_to} to {device_mup_href}")
         await submit_resource(
             state.context.http, HTTPMethod.POST, device_mup_href, device_readings, no_location_header=True
         )
@@ -785,7 +785,7 @@ async def run_polls(state: ClientState, min_wait: timedelta = timedelta(seconds=
 
     if poll_required(state.derl, now):
         async with state.db.session_maker() as session:
-            await poll_derprogram_list(state, session, now)
+            await post_der_metadata(state, session, now)
             await session.commit()
 
     if poll_required(state.mupl, now):
