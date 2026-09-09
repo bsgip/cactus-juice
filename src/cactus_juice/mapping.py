@@ -29,7 +29,7 @@ from envoy_schema.server.schema.sep2.metering_mirror import (
     MirrorUsagePoint,
     MirrorUsagePointRequest,
 )
-from envoy_schema.server.schema.sep2.pricing import RateComponentResponse, TimeTariffIntervalResponse
+from envoy_schema.server.schema.sep2.pricing import TimeTariffIntervalResponse
 from envoy_schema.server.schema.sep2.response import Response, ResponseType
 from envoy_schema.server.schema.sep2.types import (
     DataQualifierType,
