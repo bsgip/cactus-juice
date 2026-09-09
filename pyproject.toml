@@ -20,6 +20,7 @@ max-complexity = 15
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S", "ANN", "N"]
+"src/cactus_juice/api/routers/**" = ["B008"]  # FastAPI's Depends()/File()/Form() are meant to be used as defaults
 
 [tool.ty.src]
 include = ["src", "tests"]
@@ -43,7 +44,9 @@ dependencies = [
     "aiohttp>=3,<4",
     "pydantic_xml[lxml]>=2.11.7,<3",
     "cryptography",
-    "cactus-test-definitions"
+    "cactus-test-definitions",
+    "uvicorn[standard]>=0.52.4",
+    "python-multipart>=0.0.32",
 ]
 
 [project.optional-dependencies]

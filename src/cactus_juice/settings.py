@@ -10,6 +10,10 @@ class CactusJuiceSettings(BaseSettings):
     # database
     juice_database_url: PostgresDsn
 
+    # api
+    # Origins allowed to call the JSON API (eg the vite dev server)
+    juice_cors_origins: list[str] = ["http://localhost:5173"]
+
     @classmethod
     def settings_customise_sources(
         cls,
