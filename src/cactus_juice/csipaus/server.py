@@ -140,7 +140,7 @@ async def get_resource[T: Resource](t: type[T], context: HttpContext, href: str)
     response = await make_request(context, href, HTTPMethod.GET)
 
     if not response.is_success():
-        raise RequestError(f"Received status {response.status} requesting {response.method} {href}.")
+        raise RequestError(f"Received status {response.status} requesting {response.method} {href}. {response.body}")
 
     return parse_type_response(t, response)
 

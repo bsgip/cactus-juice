@@ -316,7 +316,10 @@ async def in_band_register(state: ClientState, end_device_list_href: str) -> End
             logger.warning(f"Unable to write NMI for {edev_href} - no ConnectionPointLink")
         else:
             await submit_resource(
-                state.context.http, HTTPMethod.POST, end_device_list_href, ConnectionPointRequest(id=state.context.nmi)
+                state.context.http,
+                HTTPMethod.PUT,
+                created_edev.ConnectionPointLink.href,
+                ConnectionPointRequest(id=state.context.nmi),
             )
 
     # Mark certain resources as requiring an update after we register an EndDevice
@@ -719,29 +722,31 @@ async def post_unsent_responses(state: ClientState, session: AsyncSession, now: 
 
     # Control responses
     control_responses = await fetch_unsent_control_responses(session, now, include_control=True)
-    logger.info(f"Found {len(control_responses)} unsent DERControl Responses to send")
-    for ctrl_response in control_responses:
-        if ctrl_response.control.reply_to:
-            body = csipaus_response_to_response(ctrl_response, subject_mrid=ctrl_response.control.mrid)
-            await submit_resource(
-                state.context.http, HTTPMethod.POST, ctrl_response.control.reply_to, body, no_location_header=True
-            )
-            ctrl_response.sent_at = now
+    if control_responses:
+        logger.info(f"Found {len(control_responses)} unsent DERControl Responses to send")
+        for ctrl_response in control_responses:
+            if ctrl_response.control.reply_to:
+                body = csipaus_response_to_response(ctrl_response, subject_mrid=ctrl_response.control.mrid)
+                await submit_resource(
+                    state.context.http, HTTPMethod.POST, ctrl_response.control.reply_to, body, no_location_header=True
+                )
+                ctrl_response.sent_at = now
 
     # Price responses
     price_responses = await fetch_unsent_dynamic_price_responses(session, now, include_dynamic_price=True)
-    logger.info(f"Found {len(price_responses)} unsent TimeTariffInterval Responses to send")
-    for price_response in price_responses:
-        if price_response.dynamic_price.reply_to:
-            body = csipaus_response_to_response(price_response, subject_mrid=price_response.dynamic_price.mrid)
-            await submit_resource(
-                state.context.http,
-                HTTPMethod.POST,
-                price_response.dynamic_price.reply_to,
-                body,
-                no_location_header=True,
-            )
-            price_response.sent_at = now
+    if price_responses:
+        logger.info(f"Found {len(price_responses)} unsent TimeTariffInterval Responses to send")
+        for price_response in price_responses:
+            if price_response.dynamic_price.reply_to:
+                body = csipaus_response_to_response(price_response, subject_mrid=price_response.dynamic_price.mrid)
+                await submit_resource(
+                    state.context.http,
+                    HTTPMethod.POST,
+                    price_response.dynamic_price.reply_to,
+                    body,
+                    no_location_header=True,
+                )
+                price_response.sent_at = now
 
     await session.flush()
 
