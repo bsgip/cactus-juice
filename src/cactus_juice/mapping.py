@@ -2,6 +2,7 @@ import hashlib
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
+from decimal import Decimal
 from typing import overload
 
 from cactus_test_definitions.csipaus import (
@@ -28,6 +29,7 @@ from envoy_schema.server.schema.sep2.metering_mirror import (
     MirrorUsagePoint,
     MirrorUsagePointRequest,
 )
+from envoy_schema.server.schema.sep2.pricing import RateComponentResponse, TimeTariffIntervalResponse
 from envoy_schema.server.schema.sep2.response import Response, ResponseType
 from envoy_schema.server.schema.sep2.types import (
     DataQualifierType,
@@ -44,6 +46,7 @@ from cactus_juice.error import BaseJuiceError
 from cactus_juice.model import (
     CSIPAusControl,
     CSIPAusControlResponse,
+    CSIPAusDynamicPrice,
     CSIPAusDynamicPriceResponse,
     OCPPMetadata,
     OCPPReading,
@@ -587,3 +590,112 @@ def csipaus_response_to_response(
         endDeviceLFDI=response.end_device_lfdi,
         subject=subject_mrid,
     )
+
+
+def calculate_dollars_kwh(encoded_price: int, wh_pow10: int, currency_pow10: int) -> Decimal:
+    """Convert an integer-encoded price into a Decimal $/kWh price.
+
+    Args:
+        encoded_price: The raw integer price value.
+        wh_pow10: Power-of-ten exponent of the energy unit relative to a
+            watt-hour (e.g. 3 == kWh, 6 == MWh, 0 == Wh).
+        currency_pow10: Power-of-ten exponent of the currency's base unit
+            relative to one dollar (e.g. -2 == cents, 0 == dollars).
+
+    Returns:
+        A decimal.Decimal representing the price in dollars per kWh.
+    """
+    exponent = currency_pow10 - wh_pow10 + 3
+    return Decimal(encoded_price).scaleb(exponent)
+
+
+def time_tariff_interval_to_csipaus_price(
+    primacy: int, currency_pow10: int, rc_rt: ReadingType, tti: TimeTariffIntervalResponse
+) -> CSIPAusDynamicPrice | None:
+    """Converts a TimeTariffInterval into a dynamic price. Can return None if the TTI is missing critical info or
+    represents a periodic price (which cannot map to a CSIPAusDynamicPrice)"""
+
+    # We only price real energy
+    if rc_rt.uom != UomType.REAL_ENERGY_WATT_HOURS:
+        return None
+
+    # Find the basic price
+    if (
+        not tti.ConsumptionTariffIntervalListSummary
+        or not tti.ConsumptionTariffIntervalListSummary.ConsumptionTariffInterval
+    ):
+        return None
+    raw_price: int | None = None
+    for cti in tti.ConsumptionTariffIntervalListSummary.ConsumptionTariffInterval:
+        if cti.price is None:
+            continue
+        raw_price = cti.price
+        if cti.startValue == 0:
+            break
+    if raw_price is None:
+        return None
+
+    price_kwh = calculate_dollars_kwh(
+        encoded_price=raw_price, wh_pow10=rc_rt.powerOfTenMultiplier or 0, currency_pow10=currency_pow10
+    )
+
+    # We mark something as cancelled based on when we saw it
+    # The crud layer will ensure that the value will be write once
+    cancelled_at = None
+    if (
+        tti.EventStatus_.currentStatus == EventStatusType.Cancelled
+        or tti.EventStatus_.currentStatus == EventStatusType.CancelledWithRandomization
+    ):
+        cancelled_at = datetime.now(UTC)
+
+    # We *should* be a little more granular here but we're just going to assume that ANY response required will
+    # generate all responses.
+    reply_to = None
+    if tti.responseRequired and int(tti.responseRequired, 16):
+        reply_to = tti.replyTo
+
+    return CSIPAusDynamicPrice(
+        primacy=primacy,
+        mrid=tti.mRID,
+        duration_seconds=tti.interval.duration,
+        started_at=datetime.fromtimestamp(tti.interval.start, tz=UTC),
+        cancelled_at=cancelled_at,
+        reply_to=reply_to,
+        price_kwh=price_kwh,
+    )
+
+
+def csipaus_prices_to_responses(
+    prices: Iterable[CSIPAusDynamicPrice], edev_lfdi: str
+) -> list[CSIPAusDynamicPriceResponse]:
+    """Converts each price into a set of CSIPAusDynamicPriceResponse that will be required to be sent. Does NOT
+    factor in the current clock time, all required responses will be generated and returned.
+
+    prices should be pulled from the DB directly - they will require PK / other DB generated fields to be set"""
+
+    responses: list[CSIPAusDynamicPriceResponse] = []
+    for price in prices:
+        if price.reply_to is None:
+            continue
+
+        # Prices only sent responses for received/cancelled
+        responses.append(
+            CSIPAusDynamicPriceResponse(
+                dynamic_price=price,
+                response_status=ResponseType.EVENT_RECEIVED,
+                end_device_lfdi=edev_lfdi,
+                not_before=price.created_at,
+                sent_at=None,
+            )
+        )
+        if price.cancelled_at:
+            responses.append(
+                CSIPAusDynamicPriceResponse(
+                    dynamic_price=price,
+                    response_status=ResponseType.EVENT_CANCELLED,
+                    end_device_lfdi=edev_lfdi,
+                    not_before=price.cancelled_at,
+                    sent_at=None,
+                )
+            )
+    return responses

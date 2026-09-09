@@ -16,9 +16,15 @@ from envoy_schema.server.schema.sep2.der import (
 from envoy_schema.server.schema.sep2.device_capability import DeviceCapabilityResponse
 from envoy_schema.server.schema.sep2.end_device import EndDeviceListResponse, EndDeviceRequest, EndDeviceResponse
 from envoy_schema.server.schema.sep2.function_set_assignments import FunctionSetAssignmentsListResponse
+from envoy_schema.server.schema.sep2.metering import ReadingType
 from envoy_schema.server.schema.sep2.metering_mirror import (
     MirrorUsagePoint,
     MirrorUsagePointList,
+)
+from envoy_schema.server.schema.sep2.pricing import (
+    RateComponentResponse,
+    TariffProfileListResponse,
+    TimeTariffIntervalListResponse,
 )
 from envoy_schema.server.schema.sep2.time import TimeResponse
 from envoy_schema.server.schema.sep2.types import DeviceCategory
@@ -26,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from cactus_juice.crud import (
     fetch_controls_with_mrids,
+    fetch_dynamic_prices_with_mrids,
     fetch_ocpp_metadata,
     fetch_ocpp_readings_in_range,
     fetch_unsent_control_responses,
@@ -33,6 +40,8 @@ from cactus_juice.crud import (
     update_active_default,
     upsert_control_responses,
     upsert_controls,
+    upsert_dynamic_price_responses,
+    upsert_dynamic_prices,
 )
 from cactus_juice.csipaus.config import CSIPAusContext
 from cactus_juice.csipaus.server import get_resource, paginate_list_resource_items, submit_resource
@@ -42,6 +51,7 @@ from cactus_juice.mapping import (
     MirrorUsagePointMrids,
     create_location_mup,
     csipaus_controls_to_responses,
+    csipaus_prices_to_responses,
     csipaus_response_to_response,
     default_dercontrols_to_values,
     dercontrol_to_csipaus_control,
@@ -49,8 +59,9 @@ from cactus_juice.mapping import (
     ocpp_metadata_to_sep2,
     ocpp_readings_to_submit_mmr,
     previous_post_period,
+    time_tariff_interval_to_csipaus_price,
 )
-from cactus_juice.model import CSIPAusControl
+from cactus_juice.model import CSIPAusControl, CSIPAusDynamicPrice
 
 logger = logging.getLogger(__name__)
 
@@ -541,8 +552,93 @@ async def poll_derprogram_list(state: ClientState, session: AsyncSession, now: d
     state.derpl_last_poll = now
 
 
+async def poll_tariff_list(state: ClientState, session: AsyncSession, now: datetime) -> None:
+    """Polls the discovered TariffProfile lists and their associated TimeTariffInterval/RateComponents. Will
+    create CSIPAusDynamicPrice records (and their responses) in the DB."""
+    if state.edev_href is None:
+        logger.info("No EndDevice registered - unable to poll TariffProfileList.")
+        return
+
+    if not state.tpl_hrefs:
+        logger.info("No TariffProfileList href(s) discovered - unable to poll.")
+        return
+
+    # Walk all the TariffProfiles via combined list - looking for TimeTariffIntervals
+    all_poll_rates: list[int] = []
+    rate_component_by_href: dict[str, RateComponentResponse] = {}
+    reading_type_by_href: dict[str, ReadingType] = {}
+    all_dynamic_prices: list[CSIPAusDynamicPrice] = []
+    for tpl_href in state.tpl_hrefs:
+        tps = await paginate_list_resource_items(
+            TariffProfileListResponse,
+            state.context.http,
+            tpl_href,
+            100,
+            lambda derpl: cast(TariffProfileListResponse, derpl).TariffProfile,
+        )
+        if tps.poll_rate_seconds is not None:
+            all_poll_rates.append(tps.poll_rate_seconds)
+        for tp in tps.items:
+            primacy = tp.primacyType
+            currency_pow10 = tp.pricePowerOfTenMultiplier or 0
+
+            if not tp.CombinedTimeTariffIntervalListLink:
+                logger.info(f"TariffProfile {tp.href} has no CombinedTimeTariffIntervalListLink")
+                continue
+
+            ttis = await paginate_list_resource_items(
+                TimeTariffIntervalListResponse,
+                state.context.http,
+                tp.CombinedTimeTariffIntervalListLink.href,
+                100,
+                lambda derpl: cast(TimeTariffIntervalListResponse, derpl).TimeTariffInterval,
+            )
+
+            # Strictly speaking - we should be splitting TTI discovery from TP discovery on seperate polls
+            # but we are simplifying things here for this demonstration
+            if ttis.poll_rate_seconds is not None:
+                all_poll_rates.append(ttis.poll_rate_seconds)
+
+            for tti in ttis.items:
+                if not tti.RateComponentLink:
+                    logger.info(f"TariffProfile {tp.href} has TimeTariffInterval {tti.href} with no RateComponentLink")
+                    continue
+
+                # Cache the RateComponent lookups
+                rc = rate_component_by_href.get(tti.RateComponentLink.href)
+                if rc is None:
+                    rc = await get_resource(RateComponentResponse, state.context.http, tti.RateComponentLink.href)
+                    rate_component_by_href[tti.RateComponentLink.href] = rc
+                rc_rt = reading_type_by_href.get(rc.ReadingTypeLink.href)
+                if rc_rt is None:
+                    rc_rt = await get_resource(ReadingType, state.context.http, rc.ReadingTypeLink.href)
+                    reading_type_by_href[rc.ReadingTypeLink.href] = rc_rt
+
+                # See if this is a dynamic energy price or something else
+                dynamic_price = time_tariff_interval_to_csipaus_price(primacy, currency_pow10, rc_rt, tti)
+                if dynamic_price is not None:
+                    all_dynamic_prices.append(dynamic_price)
+
+    # Persist all the data we just scraped - we have to carefully update things - these crud functions will ensure
+    # we correctly insert/update the records and don't thrash the DB if we keep polling the same data.
+    logger.info(f"Updating with {len(all_dynamic_prices)} TimeTariffIntervals")
+    await upsert_dynamic_prices(session, all_dynamic_prices)
+
+    # next we want to queue up some responses - these require the PK of the CSIPAusDynamicPirce as well as the ACTUAL
+    # values for cancelled so we need to go via the DB. The upsert will NOT duplicate responses so
+    # we're free to send "everything" down
+    db_prices = await fetch_dynamic_prices_with_mrids(session, (c.mrid for c in all_dynamic_prices))
+    responses = csipaus_prices_to_responses(db_prices, state.context.edev_lfdi)
+    await upsert_dynamic_price_responses(session, responses)
+
+    # Update the state with the info that we polled
+    state.tpl_poll_rate = timedelta(seconds=min(all_poll_rates)) if all_poll_rates else state.fsal_poll_rate
+    state.tpl_last_poll = now
+
+
 async def post_unsent_responses(state: ClientState, session: AsyncSession, now: datetime) -> None:
-    """Selects all unsent Responses that are due to send - sends them and then marks the records as sent"""
+    """Selects all unsent Responses that are due to send - sends them and then marks the records as sent. This isn't
+    required to be done on a regular schedule. Will do nothing if there are no unsent responses."""
 
     # Control responses
     control_responses = await fetch_unsent_control_responses(session, now, include_control=True)

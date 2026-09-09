@@ -7,6 +7,7 @@ Demonstration project showing how to link a CSIP-Aus utility server to OCPP for 
 | Environment Variable | Default Value | Description |
 |----------------------|----------------|-------------|
 | `JUICE_DATABASE_URL` | – | SQLAlchemy-style database connection string using `postgresql+asyncpg` scheme. |
+| `SECURE_TEMP_DIR_ROOT` | `/dev/shm` | A tempdir is required for loading certs/keys - this is an unavoidable weakness of the python crypto library |
 
 For development - we recommend the use of a local `.env` file - subsequent commands will assume the existence of this file.
 

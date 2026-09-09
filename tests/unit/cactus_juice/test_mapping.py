@@ -1,5 +1,6 @@
 import re
 from datetime import UTC, datetime, timedelta, timezone
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -36,6 +37,7 @@ from cactus_juice.mapping import (
     POW10_BY_READING_TYPE,
     SUPPORTED_READING_TYPES,
     MirrorUsagePointMrids,
+    calculate_dollars_kwh,
     create_location_mup,
     csipaus_controls_to_responses,
     default_dercontrols_to_values,
@@ -1016,3 +1018,39 @@ def test_csipaus_controls_to_responses_multiple_controls_flattened_in_order():
         ResponseType.EVENT_STARTED,
         ResponseType.EVENT_CANCELLED,
     }
+
+
+@pytest.mark.parametrize(
+    "encoded_price, wh_pow10, currency_pow10, expected",
+    [
+        # 1500 cents/kWh -> $15.00/kWh
+        (1500, 3, -2, Decimal("15.00")),
+        # 5 cents/Wh -> $50/kWh
+        (5, 0, -2, Decimal("50")),
+        # 100 dollars/MWh -> $0.100/kWh
+        (100, 6, 0, Decimal("0.100")),
+        # 250000 cents/GWh -> $0.00250000/kWh
+        (250000, 9, -2, Decimal("0.00250000")),
+        # zero price stays zero, regardless of scaling
+        (0, 3, -2, Decimal("0.00")),
+        # negative price is preserved
+        (-1500, 3, -2, Decimal("-15.00")),
+        # dollars already per kWh -> unchanged (identity case)
+        (12, 3, 0, Decimal("12")),
+        # milli-dollars (currency_pow10=-3) per Wh (wh_pow10=0)
+        (75, 0, -3, Decimal("75.000")),
+        # dollars per Wh -> large $/kWh value
+        (2, 0, 0, Decimal("2000")),
+        # cents per kWh, small fractional result
+        (1, 3, -2, Decimal("0.01")),
+    ],
+)
+def test_calculate_dollars_kwh(
+    encoded_price: int,
+    wh_pow10: int,
+    currency_pow10: int,
+    expected: Decimal,
+) -> None:
+    result = calculate_dollars_kwh(encoded_price, wh_pow10, currency_pow10)
+    assert isinstance(result, Decimal)
+    assert result == expected

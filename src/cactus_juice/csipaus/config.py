@@ -15,6 +15,11 @@ from cactus_juice.csipaus.sep2 import convert_lfdi_to_sfdi, lfdi_from_cert_bytes
 from cactus_juice.error import ConfigError
 from cactus_juice.model import CSIPAusConfig
 
+# This isn't ideal but we NEED a disk location to write certs to in order to load them with the
+# python crypto library. We take as many precautions as we can but ideally you shouldn't be deploying
+# this in a "unsecured" environment
+SECURE_TEMP_DIR_ROOT = os.environ.get("SECURE_TEMP_DIR_ROOT", "/dev/shm")  # noqa: S108 # nosec
+
 
 @dataclass(frozen=True, slots=True)
 class HttpContext:
@@ -44,12 +49,12 @@ class CSIPAusContext:
 
 
 @contextmanager
-def _secure_tempfile(data: bytes, dir_: str = "/dev/shm") -> Generator[Path]:  # noqa: S108
+def _secure_tempfile(data: bytes) -> Generator[Path]:  # noqa: S108
     """
     Write `data` to a restrictively-permissioned NamedTemporaryFile
     backed by tmpfs, yield its path, and guarantee cleanup.
     """
-    fd, path = tempfile.mkstemp(dir=dir_)
+    fd, path = tempfile.mkstemp(dir=SECURE_TEMP_DIR_ROOT)
     try:
         # Lock down permissions before writing any sensitive bytes.
         os.chmod(path, 0o600)
