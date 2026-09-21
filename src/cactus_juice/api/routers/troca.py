@@ -1,5 +1,6 @@
 from datetime import datetime
 
+import aiohttp
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -130,5 +131,7 @@ async def get_troca_connectors(session: AsyncSession = Depends(get_session)) -> 
             connectors = await client.get_connectors()
         except TrocaApiError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except aiohttp.ClientError as exc:
+            raise HTTPException(status_code=502, detail=f"Could not reach the Troca API: {exc}") from exc
 
     return [TrocaConnectorResponse.from_model(connector) for connector in connectors]

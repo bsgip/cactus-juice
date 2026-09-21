@@ -1,10 +1,11 @@
 import { AppShell, Group, NavLink, Text, Title } from '@mantine/core'
-import { IconChartLine, IconPlugConnected, IconSettings } from '@tabler/icons-react'
+import { IconApi, IconChartLine, IconPlugConnected, IconSettings } from '@tabler/icons-react'
 import { Link, Outlet, useLocation } from 'react-router-dom'
 
 /** Left-hand navigation entries. Telemetry/charting pages will slot in here as they're built. */
 const NAV_ITEMS = [
   { to: '/config', label: 'CSIP-Aus Config', icon: IconSettings },
+  { to: '/troca-config', label: 'Troca Config', icon: IconApi },
   { to: '/telemetry', label: 'Telemetry', icon: IconChartLine, disabled: true },
 ]
 

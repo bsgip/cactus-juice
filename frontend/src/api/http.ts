@@ -55,3 +55,16 @@ export async function apiSendForm<T>(path: string, method: 'POST' | 'PUT', formD
   }
   return (await response.json()) as T
 }
+
+/** Issues a JSON request body (used for endpoints with no file uploads) and decodes the JSON response. */
+export async function apiSendJson<T>(path: string, method: 'POST' | 'PUT', body: unknown): Promise<T> {
+  const response = await fetch(path, {
+    method,
+    body: JSON.stringify(body),
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+  })
+  if (!response.ok) {
+    throw new ApiError(response.status, await parseErrorBody(response))
+  }
+  return (await response.json()) as T
+}

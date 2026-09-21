@@ -24,7 +24,7 @@ class ConnectorType(StrEnum):
 
     X_EMS = "xEmsConnector"
     EMS = "EmsConnector"
-    Q_OCPP = "QOcppConnector"
+    Q_OCPP = "QocppConnector"
     LINKY = "LinkyConnector"
 
 
@@ -200,7 +200,7 @@ class Connector(TrocaModel):
 
     name: str
     connector_id: str = field(metadata={"alias": "connectorId"})
-    connector_type: ConnectorType = field(metadata={"alias": "connectorId"})
+    connector_type: ConnectorType = field(metadata={"alias": "connectorType"})
     created_at: str | None = field(default=None, metadata={"alias": "createdAt"})
     custom_data: dict[str, Any] = field(default_factory=dict, metadata={"alias": "customData"})
     enabling_modules: list[str] = field(default_factory=list, metadata={"alias": "enablingModules"})

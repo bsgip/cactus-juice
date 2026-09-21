@@ -2,6 +2,7 @@ import os
 from collections.abc import AsyncGenerator, Generator
 from unittest import mock
 
+import aiohttp
 import pytest
 from assertical.fixtures.postgres import generate_async_session
 from fastapi.testclient import TestClient
@@ -127,6 +128,26 @@ def test_get_connectors_returns_configured_client_results(client: TestClient):
     assert body[0]["connector_type"] == ConnectorType.EMS.value
 
     mock_client_cls.assert_called_once_with("https://troca.example.com", "user1", "secret")
+
+
+def test_get_connectors_propagates_connection_errors(client: TestClient):
+    """A Troca API that's simply unreachable raises aiohttp.ClientError (not TrocaApiError) - this must also
+    surface as a clean 502 rather than an unhandled 500."""
+    client.put(
+        "/api/troca-config",
+        json={"base_url": "https://troca.example.com", "basic_user": "user1", "basic_password": "secret"},
+    )
+
+    with mock.patch("cactus_juice.api.routers.troca.TrocaClient") as mock_client_cls:
+        mock_client = mock.AsyncMock()
+        mock_client.get_connectors.side_effect = aiohttp.ClientConnectorError(
+            mock.Mock(ssl=None), OSError("Connect call failed")
+        )
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
+
+        response = client.get("/api/troca-config/connectors")
+
+    assert response.status_code == 502
 
 
 def test_get_connectors_propagates_api_errors(client: TestClient):
