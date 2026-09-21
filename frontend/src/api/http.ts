@@ -68,3 +68,11 @@ export async function apiSendJson<T>(path: string, method: 'POST' | 'PUT', body:
   }
   return (await response.json()) as T
 }
+
+/** Issues a DELETE request with no response body (a 204). */
+export async function apiDelete(path: string): Promise<void> {
+  const response = await fetch(path, { method: 'DELETE', headers: { Accept: 'application/json' } })
+  if (!response.ok) {
+    throw new ApiError(response.status, await parseErrorBody(response))
+  }
+}

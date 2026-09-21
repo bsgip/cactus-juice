@@ -199,3 +199,21 @@ VALUES ('2026-01-01T00:10:00Z', 'https://example.com/2', 'u2', 'p2', 'c2');
 INSERT INTO troca_config (created_at, base_url, basic_user, basic_password, connector_id)
 VALUES ('2026-01-01T00:05:00Z', 'https://example.com/3', 'u3', 'p3', 'c3');
 
+-- ========= satec_config ========
+--
+-- Unlike csipaus_config/troca_config every row here is "live" at once (one per meter being polled) - there's
+-- no history to collapse down to a single current record.
+--
+-- changed_at is deliberately different from created_at for id 2 - it's been edited since it was first created.
+--
+-- id  label            connection                                    created_at  changed_at
+--  1  Meter 1 (RTU)     serial /dev/ttyUSB0                            00:00       00:00
+--  2  Meter 2 (TCP)     Modbus/TCP 10.0.0.5, phases+energy included    00:05       00:20 (edited)
+--  3  Meter 3 (Float)   serial /dev/ttyUSB1, float32 registers         00:10       00:10
+INSERT INTO satec_config (created_at, changed_at, label, poll_rate_seconds, model, host, port, port_tcp, unit, baud, parity, timeout_seconds, include_phases, include_energy, float_mode)
+VALUES ('2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'Meter 1 (RTU)', 5.0, 'em133', NULL, '/dev/ttyUSB0', 502, 1, 19200, 'N', 1.0, FALSE, FALSE, FALSE);
+INSERT INTO satec_config (created_at, changed_at, label, poll_rate_seconds, model, host, port, port_tcp, unit, baud, parity, timeout_seconds, include_phases, include_energy, float_mode)
+VALUES ('2026-01-01T00:05:00Z', '2026-01-01T00:20:00Z', 'Meter 2 (TCP)', 10.0, 'em235', '10.0.0.5', NULL, 502, 2, 19200, 'N', 2.0, TRUE, TRUE, FALSE);
+INSERT INTO satec_config (created_at, changed_at, label, poll_rate_seconds, model, host, port, port_tcp, unit, baud, parity, timeout_seconds, include_phases, include_energy, float_mode)
+VALUES ('2026-01-01T00:10:00Z', '2026-01-01T00:10:00Z', 'Meter 3 (Float)', 1.0, 'em133', NULL, '/dev/ttyUSB1', 502, 3, 9600, 'E', 0.5, FALSE, TRUE, TRUE);
+

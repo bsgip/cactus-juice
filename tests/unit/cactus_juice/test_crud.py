@@ -13,7 +13,10 @@ from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from cactus_juice.crud import (
     CSIPAUS_CONFIG_VALUE_COLUMNS,
     DEFAULT_MAX_DATE,
+    SATEC_CONFIG_VALUE_COLUMNS,
     TROCA_CONFIG_VALUE_COLUMNS,
+    create_satec_config,
+    delete_satec_config,
     fetch_active_default,
     fetch_controls_active_from,
     fetch_controls_with_mrids,
@@ -23,11 +26,14 @@ from cactus_juice.crud import (
     fetch_dynamic_prices_with_mrids,
     fetch_ocpp_metadata,
     fetch_ocpp_readings_in_range,
+    fetch_satec_config,
+    fetch_satec_configs,
     fetch_troca_config,
     fetch_unsent_control_responses,
     fetch_unsent_dynamic_price_responses,
     update_active_default,
     update_csipaus_config,
+    update_satec_config,
     update_troca_config,
     upsert_control_responses,
     upsert_controls,
@@ -44,6 +50,7 @@ from cactus_juice.model import (
     CSIPAusDynamicPriceResponse,
     OCPPMetadata,
     OCPPReading,
+    SatecConfig,
     TrocaConfig,
 )
 
@@ -1538,6 +1545,194 @@ async def test_update_troca_config_no_commit(pg_base_config):
 
     async with generate_async_session(pg_base_config) as session:
         assert (count_before + 1) == (await session.execute(select(func.count()).select_from(TrocaConfig))).scalar_one()
+
+
+async def test_fetch_satec_configs_empty(pg_empty_config):
+    """No SatecConfig registered yet -> empty list."""
+    async with generate_async_session(pg_empty_config) as session:
+        assert await fetch_satec_configs(session) == []
+
+
+async def test_fetch_satec_configs(pg_base_config):
+    """Unlike CSIPAusConfig/TrocaConfig every row is live at once - all three are returned, in id order."""
+    async with generate_async_session(pg_base_config) as session:
+        actual = await fetch_satec_configs(session)
+
+    assert_list_type(SatecConfig, actual, count=3)
+    assert [c.satec_config_id for c in actual] == [1, 2, 3]
+    assert [c.label for c in actual] == ["Meter 1 (RTU)", "Meter 2 (TCP)", "Meter 3 (Float)"]
+
+
+async def test_fetch_satec_config(pg_base_config):
+    async with generate_async_session(pg_base_config) as session:
+        actual = await fetch_satec_config(session, 2)
+
+    assert actual is not None
+    assert actual.satec_config_id == 2
+    assert actual.label == "Meter 2 (TCP)"
+    assert actual.host == "10.0.0.5"
+    assert actual.port is None
+    assert actual.include_phases is True
+    assert actual.include_energy is True
+    assert actual.float_mode is False
+    assert actual.created_at == datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC)
+    assert actual.changed_at == datetime(2026, 1, 1, 0, 20, 0, tzinfo=UTC)  # edited since creation
+
+
+async def test_fetch_satec_config_missing(pg_base_config):
+    async with generate_async_session(pg_base_config) as session:
+        assert await fetch_satec_config(session, 9999) is None
+
+
+async def test_create_satec_config_empty(pg_empty_config):
+    new_values = generate_class_instance(SatecConfig)
+
+    async with generate_async_session(pg_empty_config) as session:
+        created = await create_satec_config(session, new_values)
+        # server-generated columns are readable immediately after flush (via INSERT...RETURNING) - the API
+        # routes rely on this to build a response without needing a post-commit re-fetch
+        created_id = created.satec_config_id
+        assert_nowish(created.created_at)
+        assert_nowish(created.changed_at)
+        await session.commit()
+        assert created_id is not None
+
+    async with generate_async_session(pg_empty_config) as session:
+        rows = (await session.execute(select(SatecConfig).order_by(SatecConfig.satec_config_id))).scalars().all()
+        assert len(rows) == 1
+        assert_nowish(rows[0].created_at)
+        assert_nowish(rows[0].changed_at)
+        for col in SATEC_CONFIG_VALUE_COLUMNS:
+            assert getattr(rows[0], col) == getattr(new_values, col)
+
+
+async def test_create_satec_config_appends(pg_base_config):
+    """create_satec_config adds a new row alongside the existing ones - it never replaces them."""
+    new_values = generate_class_instance(SatecConfig, seed=1001)
+
+    async with generate_async_session(pg_base_config) as session:
+        created = await create_satec_config(session, new_values)
+        created_id = created.satec_config_id  # read before commit() expires the instance
+        await session.commit()
+        assert created_id == 4
+
+    async with generate_async_session(pg_base_config) as session:
+        rows = (await session.execute(select(SatecConfig).order_by(SatecConfig.satec_config_id))).scalars().all()
+
+    assert len(rows) == 4
+    by_id = {r.satec_config_id: r for r in rows}
+    assert by_id[1].label == "Meter 1 (RTU)"
+    assert by_id[2].label == "Meter 2 (TCP)"
+    assert by_id[3].label == "Meter 3 (Float)"
+    for col in SATEC_CONFIG_VALUE_COLUMNS:
+        assert getattr(by_id[4], col) == getattr(new_values, col)
+    assert_nowish(by_id[4].changed_at)  # set by create_satec_config, not caller-supplied
+
+
+async def test_create_satec_config_no_commit(pg_base_config):
+    """create_satec_config must never commit/rollback on its own - the caller owns the transaction."""
+    new_values = generate_class_instance(SatecConfig, seed=1)
+
+    async with generate_async_session(pg_base_config) as session:
+        count_before = (await session.execute(select(func.count()).select_from(SatecConfig))).scalar_one()
+
+    async with generate_async_session(pg_base_config) as session:
+        await create_satec_config(session, new_values)
+
+    async with generate_async_session(pg_base_config) as session:
+        assert count_before == (await session.execute(select(func.count()).select_from(SatecConfig))).scalar_one()
+
+    async with generate_async_session(pg_base_config) as session:
+        await create_satec_config(session, new_values)
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        assert (count_before + 1) == (
+            await session.execute(select(func.count()).select_from(SatecConfig))
+        ).scalar_one()
+
+
+async def test_update_satec_config(pg_base_config):
+    """update_satec_config mutates the row in place - it does not append a new one."""
+    new_values = generate_class_instance(SatecConfig, seed=2002)
+
+    async with generate_async_session(pg_base_config) as session:
+        updated = await update_satec_config(session, 2, new_values)
+        assert updated is not None
+        updated_id = updated.satec_config_id  # read before commit() expires the instance
+        await session.commit()
+        assert updated_id == 2
+
+    async with generate_async_session(pg_base_config) as session:
+        rows = (await session.execute(select(SatecConfig).order_by(SatecConfig.satec_config_id))).scalars().all()
+
+    assert len(rows) == 3
+    by_id = {r.satec_config_id: r for r in rows}
+    # untouched siblings
+    assert by_id[1].label == "Meter 1 (RTU)"
+    assert by_id[1].changed_at == datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+    assert by_id[3].label == "Meter 3 (Float)"
+    for col in SATEC_CONFIG_VALUE_COLUMNS:
+        assert getattr(by_id[2], col) == getattr(new_values, col)
+    # bumped to now, regardless of what changed_at new_values happened to carry - was 00:20 before this update
+    assert_nowish(by_id[2].changed_at)
+
+
+async def test_update_satec_config_missing(pg_base_config):
+    """Updating an id that doesn't exist returns None and leaves every row untouched."""
+    new_values = generate_class_instance(SatecConfig)
+
+    async with generate_async_session(pg_base_config) as session:
+        count_before = (await session.execute(select(func.count()).select_from(SatecConfig))).scalar_one()
+        assert await update_satec_config(session, 9999, new_values) is None
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        assert count_before == (await session.execute(select(func.count()).select_from(SatecConfig))).scalar_one()
+
+
+async def test_update_satec_config_no_commit(pg_base_config):
+    """update_satec_config must never commit/rollback on its own - the caller owns the transaction."""
+    new_values = generate_class_instance(SatecConfig, seed=3)
+
+    async with generate_async_session(pg_base_config) as session:
+        await update_satec_config(session, 1, new_values)
+
+    async with generate_async_session(pg_base_config) as session:
+        current = await fetch_satec_config(session, 1)
+        assert current is not None
+        assert current.label == "Meter 1 (RTU)"  # unchanged - the update was never committed
+        assert current.changed_at == datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+
+
+async def test_delete_satec_config(pg_base_config):
+    async with generate_async_session(pg_base_config) as session:
+        assert await delete_satec_config(session, 2) is True
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        rows = (await session.execute(select(SatecConfig).order_by(SatecConfig.satec_config_id))).scalars().all()
+
+    assert [r.satec_config_id for r in rows] == [1, 3]
+
+
+async def test_delete_satec_config_missing(pg_base_config):
+    async with generate_async_session(pg_base_config) as session:
+        count_before = (await session.execute(select(func.count()).select_from(SatecConfig))).scalar_one()
+        assert await delete_satec_config(session, 9999) is False
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        assert count_before == (await session.execute(select(func.count()).select_from(SatecConfig))).scalar_one()
+
+
+async def test_delete_satec_config_no_commit(pg_base_config):
+    """delete_satec_config must never commit/rollback on its own - the caller owns the transaction."""
+    async with generate_async_session(pg_base_config) as session:
+        assert await delete_satec_config(session, 1) is True
+
+    async with generate_async_session(pg_base_config) as session:
+        assert await fetch_satec_config(session, 1) is not None  # unchanged - the delete was never committed
 
 
 async def test_csipaus_default_rejects_overlapping_active_range(pg_base_config):

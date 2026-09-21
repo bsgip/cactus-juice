@@ -16,6 +16,7 @@ from cactus_juice.model import (
     CSIPAusDynamicPriceResponse,
     OCPPMetadata,
     OCPPReading,
+    SatecConfig,
     TrocaConfig,
 )
 
@@ -497,3 +498,79 @@ async def update_troca_config(session: AsyncSession, values: TrocaConfig) -> Non
     await session.execute(
         insert(TrocaConfig).values(**{col: getattr(values, col) for col in TROCA_CONFIG_VALUE_COLUMNS})
     )
+
+
+# The mutable columns on SatecConfig - excludes the PK and created_at.
+SATEC_CONFIG_VALUE_COLUMNS = (
+    "label",
+    "poll_rate_seconds",
+    "model",
+    "host",
+    "port",
+    "port_tcp",
+    "unit",
+    "baud",
+    "parity",
+    "timeout_seconds",
+    "include_phases",
+    "include_energy",
+    "float_mode",
+)
+
+
+async def fetch_satec_configs(session: AsyncSession) -> Sequence[SatecConfig]:
+    """Fetches every registered SatecConfig - unlike CSIPAusConfig/TrocaConfig there's no rolling history to
+    collapse down to a single "current" record, so every live row is returned (one per meter being polled)."""
+
+    return (await session.execute(select(SatecConfig).order_by(SatecConfig.satec_config_id))).scalars().all()
+
+
+async def fetch_satec_config(session: AsyncSession, satec_config_id: int) -> SatecConfig | None:
+    """Fetches a single SatecConfig by id, or None if no such row exists."""
+
+    return await session.get(SatecConfig, satec_config_id)
+
+
+async def create_satec_config(session: AsyncSession, values: SatecConfig) -> SatecConfig:
+    """Inserts a new SatecConfig row carrying the specified values and returns it (with its assigned id).
+    changed_at is set to now - it is not caller-supplied.
+
+    does NOT commit any transaction."""
+
+    entry = SatecConfig(
+        **{col: getattr(values, col) for col in SATEC_CONFIG_VALUE_COLUMNS}, changed_at=datetime.now(UTC)
+    )
+    session.add(entry)
+    await session.flush()
+    return entry
+
+
+async def update_satec_config(session: AsyncSession, satec_config_id: int, values: SatecConfig) -> SatecConfig | None:
+    """Updates an existing SatecConfig row in place with the specified values - or returns None if no row with
+    that id exists. changed_at is bumped to now on every call, whether or not any value actually changed.
+
+    does NOT commit any transaction."""
+
+    entry = await session.get(SatecConfig, satec_config_id)
+    if entry is None:
+        return None
+
+    for col in SATEC_CONFIG_VALUE_COLUMNS:
+        setattr(entry, col, getattr(values, col))
+    entry.changed_at = datetime.now(UTC)
+    await session.flush()
+    return entry
+
+
+async def delete_satec_config(session: AsyncSession, satec_config_id: int) -> bool:
+    """Deletes a SatecConfig row by id - returns True if a row was deleted, False if none existed.
+
+    does NOT commit any transaction."""
+
+    entry = await session.get(SatecConfig, satec_config_id)
+    if entry is None:
+        return False
+
+    await session.delete(entry)
+    await session.flush()
+    return True

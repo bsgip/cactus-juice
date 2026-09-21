@@ -357,3 +357,36 @@ class TrocaConfig(Base):
 
     # Details about the connection
     connector_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class SatecConfig(Base):
+    """Represents the connection details for polling a single SATEC meter over Modbus - unlike CSIPAusConfig/
+    TrocaConfig there is no rolling history, multiple rows may be live at once (one per meter being polled) and
+    each is updated/deleted in place."""
+
+    __tablename__ = "satec_config"
+
+    satec_config_id: Mapped[int] = mapped_column(name="id", primary_key=True, autoincrement=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )  # Set by crud.py on every create/update - unlike created_at this moves when the row is edited in place
+
+    label: Mapped[str] = mapped_column(String)  # Short human readable descriptor
+    poll_rate_seconds: Mapped[float] = mapped_column(DOUBLE_PRECISION)
+
+    # Connection (mirrors --model/--port/--host/--port-tcp/--unit/--baud/--parity/--timeout)
+    model: Mapped[str] = mapped_column(String)  # PROFILES key, e.g. "em133"/"em235"
+    host: Mapped[str | None] = mapped_column(String, nullable=True)  # Set to use Modbus/TCP instead of serial RTU
+    port: Mapped[str | None] = mapped_column(String, nullable=True)  # Serial device, e.g. /dev/ttyUSB0
+    port_tcp: Mapped[int] = mapped_column(Integer, server_default="502")
+    unit: Mapped[int] = mapped_column(Integer, server_default="1")  # Modbus address 1-247
+    baud: Mapped[int] = mapped_column(Integer, server_default="19200")
+    parity: Mapped[str] = mapped_column(String, server_default="N")  # N/E/O
+    timeout_seconds: Mapped[float] = mapped_column(DOUBLE_PRECISION, server_default="1.0")
+
+    # Sampling options (mirrors --phases/--energy/--float)
+    include_phases: Mapped[bool] = mapped_column(Boolean, server_default="FALSE")
+    include_energy: Mapped[bool] = mapped_column(Boolean, server_default="FALSE")
+    float_mode: Mapped[bool] = mapped_column(Boolean, server_default="FALSE")  # Meter is configured for float32 regs

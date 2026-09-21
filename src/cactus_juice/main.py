@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from cactus_juice.api.routers import config as config_router
+from cactus_juice.api.routers import satec as satec_router
 from cactus_juice.api.routers import troca as troca_router
 from cactus_juice.db import DatabaseConnection
 from cactus_juice.settings import CactusJuiceSettings
@@ -37,6 +38,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(config_router.router)
+    app.include_router(satec_router.router)
     app.include_router(troca_router.router)
 
     return app
