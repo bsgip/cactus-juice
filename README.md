@@ -53,3 +53,17 @@ uv run dotenv run alembic upgrade head
 uv run dotenv run alembic revision --autogenerate -m "new_migration"
 ```
 
+## Running Locally
+
+Backend:
+```
+uv run dotenv run uvicorn cactus_juice.main:create_app --factory
+```
+
+Frontend: 
+
+```
+cd frontend/
+npm build
+npm run dev
+```
