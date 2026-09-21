@@ -17,6 +17,7 @@ from cactus_juice.model import (
     OCPPMetadata,
     OCPPReading,
     SatecConfig,
+    SatecReading,
     TrocaConfig,
 )
 
@@ -574,3 +575,58 @@ async def delete_satec_config(session: AsyncSession, satec_config_id: int) -> bo
     await session.delete(entry)
     await session.flush()
     return True
+
+
+# The columns on SatecReading populated from a satec.meter.Reading - excludes the PK and created_at.
+SATEC_READING_VALUE_COLUMNS = (
+    "satec_config_id",
+    "reading_start",
+    "total_kw",
+    "total_kvar",
+    "total_kva",
+    "total_pf",
+    "total_pf_lag",
+    "total_pf_lead",
+    "kw_import",
+    "kw_export",
+    "kvar_import",
+    "kvar_export",
+    "v_avg_ln",
+    "v_avg_ll",
+    "i_avg",
+    "frequency",
+    "frequency_mhz",
+    "i_neutral",
+    "v_unbalance",
+    "i_unbalance",
+    "v1",
+    "v2",
+    "v3",
+    "i1",
+    "i2",
+    "i3",
+    "kw_l1",
+    "kw_l2",
+    "kw_l3",
+    "kvar_l1",
+    "kvar_l2",
+    "kvar_l3",
+    "kva_l1",
+    "kva_l2",
+    "kva_l3",
+    "pf_l1",
+    "pf_l2",
+    "pf_l3",
+)
+
+
+async def insert_satec_readings(session: AsyncSession, readings: list[SatecReading]) -> None:
+    """Bulk inserts the specified SatecReading rows - unlike the CSIPAus/dynamic price tables there's no
+    conflict/upsert semantics here, every poll produces a brand new set of readings.
+
+    does NOT commit any transaction."""
+    if not readings:
+        return
+
+    values = [{col: getattr(r, col) for col in SATEC_READING_VALUE_COLUMNS} for r in readings]
+    await session.execute(insert(SatecReading).values(values))

@@ -62,47 +62,6 @@ class OCPPMetadata(Base):
     set_grad_w: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
 
 
-class Meter(Base):
-    """Represents some form of third party power meter."""
-
-    __tablename__ = "meter"
-
-    meter_id: Mapped[int] = mapped_column(name="id", primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String)  # Short human readable descriptor
-
-    # TODO: Meter connection details
-
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-    meter_readings: Mapped[list["MeterReading"]] = relationship(
-        lazy="raise", back_populates="meter", cascade="all, delete-orphan"
-    )
-
-
-class MeterReading(Base):
-    """Represents an instantaneous reading from a third party meter that may or may not be associated with
-    an actual test."""
-
-    __tablename__ = "meter_reading"
-    __table_args__ = (
-        Index(
-            "meter_id_reading_start_idx",
-            "meter_id",
-            "reading_start",
-        ),
-    )
-
-    meter_reading_id: Mapped[int] = mapped_column(BIGINT, name="id", primary_key=True, autoincrement=True)
-    meter_id: Mapped[int] = mapped_column(ForeignKey("meter.id"))  # Which meter is this reading for
-
-    reading_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # When was the reading valid for?
-    active_power_watts: Mapped[int] = mapped_column(INTEGER)  # The observed power (in whole active power watts)
-
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-    meter: Mapped["Meter"] = relationship(lazy="raise", back_populates="meter_readings")
-
-
 class CSIPAusDefault(Base):
     """Represents the combination of CSIP-AUS DefaultDERControls that were active for a period of time.
     There may have been multiple contributing DERControls that generated this composite default."""
@@ -390,3 +349,68 @@ class SatecConfig(Base):
     include_phases: Mapped[bool] = mapped_column(Boolean, server_default="FALSE")
     include_energy: Mapped[bool] = mapped_column(Boolean, server_default="FALSE")
     float_mode: Mapped[bool] = mapped_column(Boolean, server_default="FALSE")  # Meter is configured for float32 regs
+
+
+class SatecReading(Base):
+    """Represents a single sample taken from a SatecConfig meter (see satec/meter.py SatecMeter.sample()).
+
+    totals/auxiliary values are always sampled so are non-nullable. Phase values are only sampled when the
+    owning SatecConfig has include_phases=True, so remain NULL otherwise."""
+
+    __tablename__ = "satec_reading"
+    __table_args__ = (
+        Index(
+            "satec_config_id_reading_start_idx",
+            "satec_config_id",
+            "reading_start",
+        ),
+    )
+
+    satec_reading_id: Mapped[int] = mapped_column(BIGINT, name="id", primary_key=True, autoincrement=True)
+    satec_config_id: Mapped[int] = mapped_column(ForeignKey("satec_config.id"))  # Which meter is this reading for
+
+    reading_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # When was the reading valid for?
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Totals block - always sampled (see satec/meter.py TOTALS_FIELDS)
+    total_kw: Mapped[float] = mapped_column(DOUBLE_PRECISION)
+    total_kvar: Mapped[float] = mapped_column(DOUBLE_PRECISION)
+    total_kva: Mapped[float] = mapped_column(DOUBLE_PRECISION)
+    total_pf: Mapped[float] = mapped_column(DOUBLE_PRECISION)
+    total_pf_lag: Mapped[float] = mapped_column(DOUBLE_PRECISION)
+    total_pf_lead: Mapped[float] = mapped_column(DOUBLE_PRECISION)
+    kw_import: Mapped[float] = mapped_column(DOUBLE_PRECISION)
+    kw_export: Mapped[float] = mapped_column(DOUBLE_PRECISION)
+    kvar_import: Mapped[float] = mapped_column(DOUBLE_PRECISION)
+    kvar_export: Mapped[float] = mapped_column(DOUBLE_PRECISION)
+    v_avg_ln: Mapped[float] = mapped_column(DOUBLE_PRECISION)
+    v_avg_ll: Mapped[float] = mapped_column(DOUBLE_PRECISION)
+    i_avg: Mapped[float] = mapped_column(DOUBLE_PRECISION)
+
+    # Auxiliary block - always sampled, restricted to the subset common to every Profile
+    # (see satec/meter.py PROFILES)
+    frequency: Mapped[float] = mapped_column(DOUBLE_PRECISION)
+    frequency_mhz: Mapped[float] = mapped_column(DOUBLE_PRECISION)
+    i_neutral: Mapped[float] = mapped_column(DOUBLE_PRECISION)
+    v_unbalance: Mapped[float] = mapped_column(DOUBLE_PRECISION)
+    i_unbalance: Mapped[float] = mapped_column(DOUBLE_PRECISION)
+
+    # Phase block - only sampled when the owning SatecConfig has include_phases=True
+    v1: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    v2: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    v3: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    i1: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    i2: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    i3: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    kw_l1: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    kw_l2: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    kw_l3: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    kvar_l1: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    kvar_l2: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    kvar_l3: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    kva_l1: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    kva_l2: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    kva_l3: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    pf_l1: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    pf_l2: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    pf_l3: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)

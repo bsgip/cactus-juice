@@ -123,13 +123,6 @@ def upgrade() -> None:
         op.f("ix_csipaus_dynamic_price_finished_at"), "csipaus_dynamic_price", ["finished_at"], unique=False
     )
     op.create_table(
-        "meter",
-        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column("name", sa.String(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_table(
         "ocpp_metadata",
         sa.Column("id", sa.BIGINT(), autoincrement=True, nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -235,21 +228,6 @@ def upgrade() -> None:
         unique=False,
     )
     op.create_table(
-        "meter_reading",
-        sa.Column("id", sa.BIGINT(), autoincrement=True, nullable=False),
-        sa.Column("meter_id", sa.Integer(), nullable=False),
-        sa.Column("reading_start", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("active_power_watts", sa.INTEGER(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.ForeignKeyConstraint(
-            ["meter_id"],
-            ["meter.id"],
-        ),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index("meter_id_reading_start_idx", "meter_reading", ["meter_id", "reading_start"], unique=False)
-
-    op.create_table(
         "troca_config",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -280,17 +258,68 @@ def upgrade() -> None:
         sa.Column("float_mode", sa.Boolean(), server_default="FALSE", nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
+    op.create_table(
+        "satec_reading",
+        sa.Column("id", sa.BIGINT(), autoincrement=True, nullable=False),
+        sa.Column("satec_config_id", sa.Integer(), nullable=False),
+        sa.Column("reading_start", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("total_kw", sa.DOUBLE_PRECISION(), nullable=False),
+        sa.Column("total_kvar", sa.DOUBLE_PRECISION(), nullable=False),
+        sa.Column("total_kva", sa.DOUBLE_PRECISION(), nullable=False),
+        sa.Column("total_pf", sa.DOUBLE_PRECISION(), nullable=False),
+        sa.Column("total_pf_lag", sa.DOUBLE_PRECISION(), nullable=False),
+        sa.Column("total_pf_lead", sa.DOUBLE_PRECISION(), nullable=False),
+        sa.Column("kw_import", sa.DOUBLE_PRECISION(), nullable=False),
+        sa.Column("kw_export", sa.DOUBLE_PRECISION(), nullable=False),
+        sa.Column("kvar_import", sa.DOUBLE_PRECISION(), nullable=False),
+        sa.Column("kvar_export", sa.DOUBLE_PRECISION(), nullable=False),
+        sa.Column("v_avg_ln", sa.DOUBLE_PRECISION(), nullable=False),
+        sa.Column("v_avg_ll", sa.DOUBLE_PRECISION(), nullable=False),
+        sa.Column("i_avg", sa.DOUBLE_PRECISION(), nullable=False),
+        sa.Column("frequency", sa.DOUBLE_PRECISION(), nullable=False),
+        sa.Column("frequency_mhz", sa.DOUBLE_PRECISION(), nullable=False),
+        sa.Column("i_neutral", sa.DOUBLE_PRECISION(), nullable=False),
+        sa.Column("v_unbalance", sa.DOUBLE_PRECISION(), nullable=False),
+        sa.Column("i_unbalance", sa.DOUBLE_PRECISION(), nullable=False),
+        sa.Column("v1", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("v2", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("v3", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("i1", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("i2", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("i3", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("kw_l1", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("kw_l2", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("kw_l3", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("kvar_l1", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("kvar_l2", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("kvar_l3", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("kva_l1", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("kva_l2", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("kva_l3", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("pf_l1", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("pf_l2", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.Column("pf_l3", sa.DOUBLE_PRECISION(), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["satec_config_id"],
+            ["satec_config.id"],
+        ),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        "satec_config_id_reading_start_idx", "satec_reading", ["satec_config_id", "reading_start"], unique=False
+    )
     # ### end Alembic commands ###
 
 
 def downgrade() -> None:
     """Downgrade schema."""
     # ### commands auto generated by Alembic - please adjust! ###
+    op.drop_index("satec_config_id_reading_start_idx", table_name="satec_reading")
+    op.drop_table("satec_reading")
     op.drop_table("satec_config")
     op.drop_index(op.f("ix_troca_config_created_at"), table_name="troca_config")
     op.drop_table("troca_config")
-    op.drop_index("meter_id_reading_start_idx", table_name="meter_reading")
-    op.drop_table("meter_reading")
     op.drop_index(op.f("ix_csipaus_dynamic_price_response_not_before"), table_name="csipaus_dynamic_price_response")
     op.drop_index(
         op.f("ix_csipaus_dynamic_price_response_csipaus_dynamic_price_id"), table_name="csipaus_dynamic_price_response"
@@ -311,7 +340,6 @@ def downgrade() -> None:
     op.drop_table("ocpp_reading")
     op.drop_index(op.f("ix_ocpp_metadata_created_at"), table_name="ocpp_metadata")
     op.drop_table("ocpp_metadata")
-    op.drop_table("meter")
     op.drop_index(op.f("ix_csipaus_dynamic_price_finished_at"), table_name="csipaus_dynamic_price")
     op.drop_table("csipaus_dynamic_price")
     op.drop_table("csipaus_default")

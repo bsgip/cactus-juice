@@ -14,6 +14,7 @@ from cactus_juice.crud import (
     CSIPAUS_CONFIG_VALUE_COLUMNS,
     DEFAULT_MAX_DATE,
     SATEC_CONFIG_VALUE_COLUMNS,
+    SATEC_READING_VALUE_COLUMNS,
     TROCA_CONFIG_VALUE_COLUMNS,
     create_satec_config,
     delete_satec_config,
@@ -31,6 +32,7 @@ from cactus_juice.crud import (
     fetch_troca_config,
     fetch_unsent_control_responses,
     fetch_unsent_dynamic_price_responses,
+    insert_satec_readings,
     update_active_default,
     update_csipaus_config,
     update_satec_config,
@@ -51,6 +53,7 @@ from cactus_juice.model import (
     OCPPMetadata,
     OCPPReading,
     SatecConfig,
+    SatecReading,
     TrocaConfig,
 )
 
@@ -1733,6 +1736,69 @@ async def test_delete_satec_config_no_commit(pg_base_config):
 
     async with generate_async_session(pg_base_config) as session:
         assert await fetch_satec_config(session, 1) is not None  # unchanged - the delete was never committed
+
+
+async def test_insert_satec_readings_empty(pg_empty_config):
+    """An empty list is a no-op - must not error even with nothing else in the DB."""
+    async with generate_async_session(pg_empty_config) as session:
+        await insert_satec_readings(session, [])
+        await session.commit()
+
+
+async def test_insert_satec_readings(pg_base_config):
+    readings = [
+        generate_class_instance(SatecReading, seed=1, satec_config_id=1),
+        generate_class_instance(SatecReading, seed=2, satec_config_id=1),
+        generate_class_instance(SatecReading, seed=3, satec_config_id=2),
+    ]
+
+    async with generate_async_session(pg_base_config) as session:
+        await insert_satec_readings(session, readings)
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        rows = (
+            (await session.execute(select(SatecReading).order_by(SatecReading.satec_reading_id))).scalars().all()
+        )
+
+    assert_list_type(SatecReading, rows, count=3)
+    for expected, actual in zip(readings, rows, strict=True):
+        assert_nowish(actual.created_at)
+        for col in SATEC_READING_VALUE_COLUMNS:
+            assert getattr(actual, col) == getattr(expected, col)
+
+
+async def test_insert_satec_readings_rejects_unknown_satec_config_id(pg_base_config):
+    """The FK to satec_config must be enforced - there's no ON DELETE/insert magic here."""
+    readings = [generate_class_instance(SatecReading, satec_config_id=9999)]
+
+    async with generate_async_session(pg_base_config) as session:
+        with pytest.raises(IntegrityError):
+            await insert_satec_readings(session, readings)
+            await session.flush()
+
+
+async def test_insert_satec_readings_no_commit(pg_base_config):
+    """insert_satec_readings must never commit/rollback on its own - the caller owns the transaction."""
+    readings = [generate_class_instance(SatecReading, satec_config_id=1)]
+
+    async with generate_async_session(pg_base_config) as session:
+        count_before = (await session.execute(select(func.count()).select_from(SatecReading))).scalar_one()
+
+    async with generate_async_session(pg_base_config) as session:
+        await insert_satec_readings(session, readings)
+
+    async with generate_async_session(pg_base_config) as session:
+        assert count_before == (await session.execute(select(func.count()).select_from(SatecReading))).scalar_one()
+
+    async with generate_async_session(pg_base_config) as session:
+        await insert_satec_readings(session, readings)
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        assert (count_before + 1) == (
+            await session.execute(select(func.count()).select_from(SatecReading))
+        ).scalar_one()
 
 
 async def test_csipaus_default_rejects_overlapping_active_range(pg_base_config):

@@ -8,10 +8,12 @@ from typing import Any
 
 from cactus_juice.settings import CactusJuiceSettings
 from cactus_juice.tasks.csipausclient import run_csipaus_client_task
+from cactus_juice.tasks.satecclient import run_satec_client_task
 
 TaskFn = Callable[[CactusJuiceSettings], Coroutine[Any, Any, None]]
 
 # Registry of all tasks runnable via `juice task <name>`.
 TASKS: dict[str, TaskFn] = {
     "csipausclient": run_csipaus_client_task,
+    "satecclient": run_satec_client_task,
 }
