@@ -8,6 +8,7 @@ import aiohttp
 from .models import (
     ChargingProfile,
     CommandStatus,
+    Connector,
     Evse,
     MeteringReading,
     Pool,
@@ -91,6 +92,12 @@ class TrocaClient:
             body = await resp.text()
             if resp.status >= 400:
                 raise TrocaApiError(resp.status, "POST", path, body)
+
+    # -- Config -----------------------------------------------
+
+    async def get_connectors(self, *, limit: int | None = None, skip: int | None = None) -> list[Connector]:
+        data = await self._get("/config/connectors", self._params(limit, skip))
+        return [Connector.from_dict(item) for item in data or []]
 
     # -- Device metadata -----------------------------------------------
 

@@ -19,6 +19,15 @@ class TrocaModel(DataClassJSONMixin):
 # --------------------------------------------------------------------------
 
 
+class ConnectorType(StrEnum):
+    """``CommandStatus`` schema."""
+
+    X_EMS = "xEmsConnector"
+    EMS = "EmsConnector"
+    Q_OCPP = "QOcppConnector"
+    LINKY = "LinkyConnector"
+
+
 class CommandStatus(StrEnum):
     """``CommandStatus`` schema."""
 
@@ -178,6 +187,26 @@ class ImageInfo(TrocaModel):
     category: str | None = None
     width: int | None = None
     height: int | None = None
+
+
+# --------------------------------------------------------------------------
+# Config
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Connector(TrocaModel):
+    """``Connector`` schema, as returned by ``GET /config/connectors``."""
+
+    name: str
+    connector_id: str = field(metadata={"alias": "connectorId"})
+    connector_type: ConnectorType = field(metadata={"alias": "connectorId"})
+    created_at: str | None = field(default=None, metadata={"alias": "createdAt"})
+    custom_data: dict[str, Any] = field(default_factory=dict, metadata={"alias": "customData"})
+    enabling_modules: list[str] = field(default_factory=list, metadata={"alias": "enablingModules"})
+    issuer_id: str | None = field(default=None, metadata={"alias": "issuerId"})
+    last_updated: str | None = field(default=None, metadata={"alias": "lastUpdated"})
+    alternative_names: list[str] = field(default_factory=list, metadata={"alias": "alternativeNames"})
 
 
 # --------------------------------------------------------------------------
