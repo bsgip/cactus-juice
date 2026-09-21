@@ -45,9 +45,7 @@ from cactus_juice.crud import (
     upsert_dynamic_prices,
 )
 from cactus_juice.csipaus.config import CSIPAusContext
-from cactus_juice.csipaus.server import get_resource, paginate_list_resource_items, submit_resource
-from cactus_juice.db import DatabaseConnection
-from cactus_juice.mapping import (
+from cactus_juice.csipaus.mapping import (
     SUPPORTED_READING_TYPES,
     MirrorUsagePointMrids,
     create_location_mup,
@@ -62,6 +60,8 @@ from cactus_juice.mapping import (
     previous_post_period,
     time_tariff_interval_to_csipaus_price,
 )
+from cactus_juice.csipaus.server import get_resource, paginate_list_resource_items, submit_resource
+from cactus_juice.db import DatabaseConnection
 from cactus_juice.model import CSIPAusControl, CSIPAusDynamicPrice
 
 logger = logging.getLogger(__name__)

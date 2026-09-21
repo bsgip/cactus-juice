@@ -531,6 +531,7 @@ def csipaus_controls_to_responses(controls: Iterable[CSIPAusControl], edev_lfdi:
         responses.append(
             CSIPAusControlResponse(
                 control=control,
+                csipaus_control_id=control.csipaus_control_id,
                 response_status=ResponseType.EVENT_RECEIVED,
                 end_device_lfdi=edev_lfdi,
                 not_before=control.created_at,
@@ -540,6 +541,7 @@ def csipaus_controls_to_responses(controls: Iterable[CSIPAusControl], edev_lfdi:
         responses.append(
             CSIPAusControlResponse(
                 control=control,
+                csipaus_control_id=control.csipaus_control_id,
                 response_status=ResponseType.EVENT_STARTED,
                 end_device_lfdi=edev_lfdi,
                 not_before=control.started_at,
@@ -551,6 +553,7 @@ def csipaus_controls_to_responses(controls: Iterable[CSIPAusControl], edev_lfdi:
             responses.append(
                 CSIPAusControlResponse(
                     control=control,
+                    csipaus_control_id=control.csipaus_control_id,
                     response_status=ResponseType.EVENT_CANCELLED,
                     end_device_lfdi=edev_lfdi,
                     not_before=control.cancelled_at,
@@ -561,6 +564,7 @@ def csipaus_controls_to_responses(controls: Iterable[CSIPAusControl], edev_lfdi:
             responses.append(
                 CSIPAusControlResponse(
                     control=control,
+                    csipaus_control_id=control.csipaus_control_id,
                     response_status=ResponseType.EVENT_SUPERSEDED,
                     end_device_lfdi=edev_lfdi,
                     not_before=control.superseded_at,
@@ -571,6 +575,7 @@ def csipaus_controls_to_responses(controls: Iterable[CSIPAusControl], edev_lfdi:
             responses.append(
                 CSIPAusControlResponse(
                     control=control,
+                    csipaus_control_id=control.csipaus_control_id,
                     response_status=ResponseType.EVENT_COMPLETED,
                     end_device_lfdi=edev_lfdi,
                     not_before=control.finished_at,
@@ -682,6 +687,7 @@ def csipaus_prices_to_responses(
         responses.append(
             CSIPAusDynamicPriceResponse(
                 dynamic_price=price,
+                csipaus_dynamic_price_id=price.csipaus_dynamic_price_id,
                 response_status=ResponseType.EVENT_RECEIVED,
                 end_device_lfdi=edev_lfdi,
                 not_before=price.created_at,
@@ -692,6 +698,7 @@ def csipaus_prices_to_responses(
             responses.append(
                 CSIPAusDynamicPriceResponse(
                     dynamic_price=price,
+                    csipaus_dynamic_price_id=price.csipaus_dynamic_price_id,
                     response_status=ResponseType.EVENT_CANCELLED,
                     end_device_lfdi=edev_lfdi,
                     not_before=price.cancelled_at,

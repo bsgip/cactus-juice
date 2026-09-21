@@ -48,6 +48,7 @@ dependencies = [
     "uvicorn[standard]>=0.52.4",
     "python-multipart>=0.0.32",
     "click",
+    "mashumaro>=3,<4",
 ]
 
 [project.scripts]

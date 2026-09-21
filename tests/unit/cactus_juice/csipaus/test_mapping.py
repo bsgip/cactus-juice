@@ -32,8 +32,7 @@ from envoy_schema.server.schema.sep2.types import (
 )
 
 from cactus_juice.csipaus.dto import DefaultValues
-from cactus_juice.error import BaseJuiceError
-from cactus_juice.mapping import (
+from cactus_juice.csipaus.mapping import (
     POW10_BY_READING_TYPE,
     SUPPORTED_READING_TYPES,
     MirrorUsagePointMrids,
@@ -53,6 +52,7 @@ from cactus_juice.mapping import (
     sep2_to_value,
     value_to_sep2,
 )
+from cactus_juice.error import BaseJuiceError
 from cactus_juice.model import CSIPAusControl, CSIPAusControlResponse, OCPPMetadata, OCPPReading
 
 
