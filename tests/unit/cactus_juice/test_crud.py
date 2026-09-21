@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from cactus_juice.crud import (
     CSIPAUS_CONFIG_VALUE_COLUMNS,
     DEFAULT_MAX_DATE,
+    TROCA_CONFIG_VALUE_COLUMNS,
     fetch_active_default,
     fetch_controls_active_from,
     fetch_controls_with_mrids,
@@ -22,10 +23,12 @@ from cactus_juice.crud import (
     fetch_dynamic_prices_with_mrids,
     fetch_ocpp_metadata,
     fetch_ocpp_readings_in_range,
+    fetch_troca_config,
     fetch_unsent_control_responses,
     fetch_unsent_dynamic_price_responses,
     update_active_default,
     update_csipaus_config,
+    update_troca_config,
     upsert_control_responses,
     upsert_controls,
     upsert_dynamic_price_responses,
@@ -41,6 +44,7 @@ from cactus_juice.model import (
     CSIPAusDynamicPriceResponse,
     OCPPMetadata,
     OCPPReading,
+    TrocaConfig,
 )
 
 DEFAULT_VALUE_COLUMNS = (
@@ -1391,6 +1395,149 @@ async def test_update_csipaus_config_no_commit(pg_base_config):
         assert (count_before + 1) == (
             await session.execute(select(func.count()).select_from(CSIPAusConfig))
         ).scalar_one()
+
+
+async def test_fetch_troca_config(pg_base_config):
+    """Returns the row with the most recent created_at (id 2), not simply the highest id."""
+    async with generate_async_session(pg_base_config) as session:
+        actual = await fetch_troca_config(session)
+
+    assert isinstance(actual, TrocaConfig)
+    assert actual.troca_config_id == 2
+    assert actual.created_at == datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC)
+    assert actual.base_url == "https://example.com/2"
+    assert actual.basic_user == "u2"
+    assert actual.basic_password == "p2"
+    assert actual.connector_id == "c2"
+
+
+async def test_fetch_troca_config_empty(pg_empty_config):
+    """No config registered yet -> None."""
+    async with generate_async_session(pg_empty_config) as session:
+        assert await fetch_troca_config(session) is None
+
+
+@pytest.mark.parametrize("optional_is_none", [True, False])
+async def test_update_troca_config_empty(pg_empty_config, optional_is_none: bool):
+    """Does update work on an empty DB"""
+    # bytes columns aren't generatable by generate_class_instance - supply them explicitly
+    new_values = generate_class_instance(TrocaConfig, optional_is_none=optional_is_none)
+
+    async with generate_async_session(pg_empty_config) as session:
+        await update_troca_config(session, new_values)
+        await session.commit()
+
+    async with generate_async_session(pg_empty_config) as session:
+        rows = (await session.execute(select(TrocaConfig).order_by(TrocaConfig.troca_config_id))).scalars().all()
+        assert len(rows) == 1
+        entry = rows[0]
+        assert_nowish(entry.created_at)
+        for col in TROCA_CONFIG_VALUE_COLUMNS:
+            assert getattr(entry, col) == getattr(new_values, col)
+
+
+@pytest.mark.parametrize("optional_is_none", [True, False])
+async def test_update_troca_config(pg_base_config, optional_is_none: bool):
+    """A new config is appended - the rest of the history is left untouched."""
+    # bytes columns aren't generatable by generate_class_instance - supply them explicitly
+    new_values = generate_class_instance(TrocaConfig, seed=1001, optional_is_none=optional_is_none)
+
+    async with generate_async_session(pg_base_config) as session:
+        await update_troca_config(session, new_values)
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        rows = (await session.execute(select(TrocaConfig).order_by(TrocaConfig.troca_config_id))).scalars().all()
+
+    # original 3 + 1 appended
+    assert len(rows) == 4
+    by_id = {r.troca_config_id: r for r in rows}
+
+    # untouched history
+    assert by_id[1].basic_user == "u1"
+    assert by_id[2].basic_user == "u2"
+    assert by_id[3].basic_user == "u3"
+
+    # brand new record carrying the supplied values
+    appended = by_id[4]
+    assert_nowish(appended.created_at)
+    for col in TROCA_CONFIG_VALUE_COLUMNS:
+        assert getattr(appended, col) == getattr(new_values, col)
+
+    # ... and it is the one now reported as current
+    async with generate_async_session(pg_base_config) as session:
+        current = await fetch_troca_config(session)
+    assert current is not None
+    assert current.troca_config_id == 4
+
+
+async def test_update_troca_config_noop_when_values_match(pg_base_config):
+    """When the supplied values exactly match the current config the call is a no-op - the history is left
+    completely untouched."""
+    async with generate_async_session(pg_base_config) as session:
+        current = await fetch_troca_config(session)
+        assert current is not None
+        matching_values = clone_class_instance(current)
+
+    async with generate_async_session(pg_base_config) as session:
+        await update_troca_config(session, matching_values)
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        rows = (await session.execute(select(TrocaConfig).order_by(TrocaConfig.troca_config_id))).scalars().all()
+
+    # Untouched - still the original 3 records, and the current config (by created_at) is still id 2
+    assert len(rows) == 3
+    async with generate_async_session(pg_base_config) as session:
+        still_current = await fetch_troca_config(session)
+    assert still_current is not None
+    assert still_current.troca_config_id == 2
+
+
+@pytest.mark.parametrize("differing_col", TROCA_CONFIG_VALUE_COLUMNS)
+async def test_update_troca_config_not_noop_when_a_value_differs(pg_base_config, differing_col: str):
+    """A single differing value column is enough to force a new record to be appended."""
+    async with generate_async_session(pg_base_config) as session:
+        current = await fetch_troca_config(session)
+        assert current is not None
+        new_values = clone_class_instance(current)
+        setattr(new_values, differing_col, _differing_value(getattr(current, differing_col)))
+
+    async with generate_async_session(pg_base_config) as session:
+        await update_troca_config(session, new_values)
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        rows = (await session.execute(select(TrocaConfig).order_by(TrocaConfig.troca_config_id))).scalars().all()
+
+    assert len(rows) == 4
+    by_id = {r.troca_config_id: r for r in rows}
+    for col in TROCA_CONFIG_VALUE_COLUMNS:
+        assert getattr(by_id[4], col) == getattr(new_values, col)
+
+
+async def test_update_troca_config_no_commit(pg_base_config):
+    """update_troca_config must never commit/rollback on its own - the caller owns the transaction."""
+    # bytes columns aren't generatable by generate_class_instance - supply them explicitly
+    new_values = generate_class_instance(TrocaConfig, seed=1)
+
+    async with generate_async_session(pg_base_config) as session:
+        count_before = (await session.execute(select(func.count()).select_from(TrocaConfig))).scalar_one()
+
+    # No explicit commit -> nothing sticks
+    async with generate_async_session(pg_base_config) as session:
+        await update_troca_config(session, new_values)
+
+    async with generate_async_session(pg_base_config) as session:
+        assert count_before == (await session.execute(select(func.count()).select_from(TrocaConfig))).scalar_one()
+
+    # Explicit commit -> sticks
+    async with generate_async_session(pg_base_config) as session:
+        await update_troca_config(session, new_values)
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        assert (count_before + 1) == (await session.execute(select(func.count()).select_from(TrocaConfig))).scalar_one()
 
 
 async def test_csipaus_default_rejects_overlapping_active_range(pg_base_config):

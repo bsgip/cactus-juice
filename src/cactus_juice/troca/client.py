@@ -31,26 +31,21 @@ class TrocaApiError(Exception):
 
 
 class TrocaClient:
-    """Thin async wrapper around the Troca HTTP API.
+    """Thin async wrapper around the Troca HTTP API."""
 
-    Owns its own ``aiohttp.ClientSession`` by default -- created lazily on
-    first use, or opened explicitly via ``async with TrocaClient(...) as client``.
-    An externally-created session can be passed in instead, in which case
-    this client never closes it.
-    """
+    _session: aiohttp.ClientSession | None
+    _auth: aiohttp.BasicAuth
+    _base_url: str
 
     def __init__(
         self,
         base_url: str,
         username: str,
         password: str,
-        *,
-        session: aiohttp.ClientSession | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._auth = aiohttp.BasicAuth(username, password)
-        self._session = session
-        self._owns_session = session is None
+        self._session = None
 
     async def __aenter__(self) -> Self:
         self._ensure_session()
@@ -65,13 +60,12 @@ class TrocaClient:
         await self.close()
 
     async def close(self) -> None:
-        if self._owns_session and self._session is not None and not self._session.closed:
+        if self._session is not None and not self._session.closed:
             await self._session.close()
 
     def _ensure_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession(auth=self._auth)
-            self._owns_session = True
         return self._session
 
     @staticmethod

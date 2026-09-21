@@ -338,3 +338,22 @@ class CSIPAusDynamicPriceResponse(Base):
             name="uc_csipaus_dynamic_price_response_device_status",
         ),
     )
+
+
+class TrocaConfig(Base):
+    """Represents the current configuration for accessing the Troca API - the active config is the entry with the
+    most recent created_at"""
+
+    __tablename__ = "troca_config"
+
+    troca_config_id: Mapped[int] = mapped_column(name="id", primary_key=True, autoincrement=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    # Connection
+    base_url: Mapped[str] = mapped_column(String)
+    basic_user: Mapped[str] = mapped_column(String)  # The HTTP BASIC username
+    basic_password: Mapped[str] = mapped_column(String)  # The HTTP BASIC password
+
+    # Details about the connection
+    connector_id: Mapped[str | None] = mapped_column(String, nullable=True)

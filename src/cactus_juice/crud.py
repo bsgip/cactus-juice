@@ -16,6 +16,7 @@ from cactus_juice.model import (
     CSIPAusDynamicPriceResponse,
     OCPPMetadata,
     OCPPReading,
+    TrocaConfig,
 )
 
 DEFAULT_MAX_DATE = datetime(9999, 1, 1, tzinfo=UTC)
@@ -459,4 +460,40 @@ async def update_csipaus_config(session: AsyncSession, values: CSIPAusConfig) ->
 
     await session.execute(
         insert(CSIPAusConfig).values(**{col: getattr(values, col) for col in CSIPAUS_CONFIG_VALUE_COLUMNS})
+    )
+
+
+# The mutable columns on TrocaConfig - excludes the PK and created_at.
+TROCA_CONFIG_VALUE_COLUMNS = (
+    "base_url",
+    "basic_user",
+    "basic_password",
+    "connector_id",
+)
+
+
+async def fetch_troca_config(session: AsyncSession) -> TrocaConfig | None:
+    """Fetches the current TrocaConfig - the record with the most recent created_at - or None if none has been
+    registered yet"""
+
+    return (
+        await session.execute(select(TrocaConfig).order_by(TrocaConfig.created_at.desc()).limit(1))
+    ).scalar_one_or_none()
+
+
+async def update_troca_config(session: AsyncSession, values: TrocaConfig) -> None:
+    """Inserts a new TrocaConfig record carrying the specified values - the intent is to always maintain a rolling
+    history of configs, with the current config being the record with the most recent created_at.
+
+    If the current config (per fetch_troca_config) already carries exactly these values this is a no-op - we
+    don't want to fragment the history with records that don't actually change anything.
+
+    does NOT commit any transaction."""
+
+    current = await fetch_troca_config(session)
+    if current is not None and all(getattr(current, col) == getattr(values, col) for col in TROCA_CONFIG_VALUE_COLUMNS):
+        return
+
+    await session.execute(
+        insert(TrocaConfig).values(**{col: getattr(values, col) for col in TROCA_CONFIG_VALUE_COLUMNS})
     )

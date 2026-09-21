@@ -184,3 +184,18 @@ VALUES ('2026-01-01T00:10:00Z', FALSE, '\x646464'::bytea, '\x656565'::bytea, 'NM
 INSERT INTO csipaus_config (created_at, is_aggregator, certificate_pem, key_pem, nmi, client_pen, dcap_uri, serca_pem, verify_hostname, verify_ssl)
 VALUES ('2026-01-01T00:05:00Z', TRUE, NULL, NULL, NULL, NULL, NULL, NULL, TRUE, TRUE);
 
+-- ========= troca_config ========
+--
+-- created_at is deliberately NOT in id order - fetch_troca_config returns the most recent created_at, which is id 2.
+--
+-- id   created_at
+--  1   00:00
+--  3   00:05
+--  2   00:10  <- latest (current)
+INSERT INTO troca_config (created_at, base_url, basic_user, basic_password, connector_id)
+VALUES ('2026-01-01T00:00:00Z', 'https://example.com/1', 'u1', 'p1', NULL);
+INSERT INTO troca_config (created_at, base_url, basic_user, basic_password, connector_id)
+VALUES ('2026-01-01T00:10:00Z', 'https://example.com/2', 'u2', 'p2', 'c2');
+INSERT INTO troca_config (created_at, base_url, basic_user, basic_password, connector_id)
+VALUES ('2026-01-01T00:05:00Z', 'https://example.com/3', 'u3', 'p3', 'c3');
+
