@@ -76,14 +76,21 @@ PHASE_FIELDS = [
     "pf_l3",
 ]
 
-# Integer-mode fractional pre-multipliers, keyed by field name.
+# --------------------------------------------------------------------------
+# Integer-mode scale factors, keyed by field name.
 #
-# The voltage scale below is confirmed for a high-resolution unit (0.1 V):
-# v1 read 2428 against 242.8 V mains. A low-resolution unit reports 1 V and
-# these entries must be removed. CURRENT AND POWER SCALES ARE NOT YET
-# CONFIRMED -- no CTs were connected during bench testing. Verify against the
-# front panel before trusting kW.
-SCALE = {
+# In integer mode the meter transmits fractional values pre-multiplied by a
+# power of ten, and reports power in W/var/VA rather than kW/kvar/kVA. These
+# tables convert back to engineering units. They are NOT applied in float
+# mode, where the meter has already done the work.
+#
+# Scales differ between models -- and, for voltage and current, between the
+# low- and high-resolution ordering options of the same model -- so each
+# profile carries its own table. COMMON_SCALE holds the entries that are the
+# same everywhere.
+# --------------------------------------------------------------------------
+
+COMMON_SCALE = {
     "total_pf": 0.001,
     "total_pf_lag": 0.001,
     "total_pf_lead": 0.001,
@@ -94,13 +101,84 @@ SCALE = {
     "frequency_mhz": 0.001,
     "v_unbalance": 0.1,
     "i_unbalance": 0.1,
-    "internal_temp": 0.1,
-    "vbatt": 0.001,
+}
+
+# Power fields are transmitted in W / var / VA. Scale to k-units so the field
+# names match the values.
+POWER_FIELDS = (
+    "total_kw",
+    "total_kvar",
+    "total_kva",
+    "kw_import",
+    "kw_export",
+    "kvar_import",
+    "kvar_export",
+    "kw_l1",
+    "kw_l2",
+    "kw_l3",
+    "kvar_l1",
+    "kvar_l2",
+    "kvar_l3",
+    "kva_l1",
+    "kva_l2",
+    "kva_l3",
+)
+
+# EM133-XM, serial 40003692, firmware 12.10.
+#
+# Voltage confirmed against mains: v1 read 2428 for 242.8 V, so 0.1 V units
+# (high-resolution ordering option -- a low-resolution unit reports whole
+# volts and these entries must be dropped).
+#
+# CURRENT AND POWER ARE UNCONFIRMED ON THIS MODEL. No CTs were connected
+# during bench testing, so every current and power register read zero. The
+# values below are carried over from the EM235, where they are confirmed;
+# verify against the front panel under load before trusting kW on an EM133.
+EM133_SCALE = {
+    **COMMON_SCALE,
     "v1": 0.1,
     "v2": 0.1,
     "v3": 0.1,
     "v_avg_ln": 0.1,
     "v_avg_ll": 0.1,
+    "i1": 0.01,
+    "i2": 0.01,
+    "i3": 0.01,
+    "i_avg": 0.01,
+    "i_neutral": 0.01,
+    **{f: 0.001 for f in POWER_FIELDS},
+}
+
+# EM235 / PM335 PRO, confirmed against a live 3-phase install at 230 V.
+#
+# Cross-check that fixes both current and power at once:
+#   v1 226.7 V x i1 5.44 A = 1233 VA against kva_l1 = 1231  (0.2%)
+# and the same holds on L2 and L3. Frequency agrees across three registers
+# at three different scales (0.01, 0.001 and 0.0001 Hz), and internal_temp
+# agrees with internal_temp_2, which confirms the decode independently.
+#
+# Caveat: on some SATEC models the power unit depends on the PT ratio (W at
+# a ratio of 1, kW otherwise). The confirming install is direct-connected,
+# so PT ratio is 1. Re-check on any site using VTs.
+EM235_SCALE = {
+    **COMMON_SCALE,
+    "v1": 0.1,
+    "v2": 0.1,
+    "v3": 0.1,
+    "v_avg_ln": 0.1,
+    "v_avg_ll": 0.1,
+    "i1": 0.01,
+    "i2": 0.01,
+    "i3": 0.01,
+    "i4": 0.01,
+    "i_avg": 0.01,
+    "i_neutral": 0.01,
+    "internal_temp": 0.1,
+    "internal_temp_2": 0.1,
+    "vbatt": 0.001,
+    "frequency_100u": 0.0001,
+    **{f: 0.001 for f in POWER_FIELDS},
+    # i_leakage units are unconfirmed -- left unscaled (raw) for now.
 }
 
 
@@ -112,6 +190,7 @@ class Profile:
     aux: tuple
     energy: tuple
     float_capable: bool
+    scale: dict
     reg_32bit_type: int | None = None
     reg_authorization: int | None = None
 
@@ -162,6 +241,7 @@ PROFILES = {
             ],
         ),
         float_capable=True,
+        scale=EM133_SCALE,
         reg_32bit_type=246,
         reg_authorization=2575,
     ),
@@ -169,6 +249,9 @@ PROFILES = {
         name="EM235 / PM335 PRO",
         totals=(14336, TOTALS_FIELDS),
         phase=(13952, PHASE_FIELDS),
+        # 15 values, confirmed by length probe. The PM335 PRO guide documents
+        # a 16th (v3xi4_kw) that this firmware does not serve -- asking for it
+        # makes the whole read fail with exception 2.
         aux=(
             14464,
             [
@@ -187,7 +270,6 @@ PROFILES = {
                 "internal_temp_2",
                 "frequency_100u",
                 "i_leakage",
-                "v3xi4_kw",
             ],
         ),
         energy=(
@@ -218,6 +300,7 @@ PROFILES = {
             ],
         ),
         float_capable=False,
+        scale=EM235_SCALE,
     ),
 }
 
@@ -305,10 +388,11 @@ class SatecMeter:
     def _read_block(self, block: tuple) -> dict:
         start, fields = block
         values = self._decode32(self._read(start, len(fields) * 2))
+        scale = self.profile.scale
         out = {}
         for name, value in zip(fields, values, strict=True):
-            if not self.float_mode and name in SCALE:
-                value *= SCALE[name]
+            if not self.float_mode and name in scale:
+                value *= scale[name]
             out[name] = value
         return out
 

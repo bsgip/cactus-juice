@@ -1650,9 +1650,7 @@ async def test_create_satec_config_no_commit(pg_base_config):
         await session.commit()
 
     async with generate_async_session(pg_base_config) as session:
-        assert (count_before + 1) == (
-            await session.execute(select(func.count()).select_from(SatecConfig))
-        ).scalar_one()
+        assert (count_before + 1) == (await session.execute(select(func.count()).select_from(SatecConfig))).scalar_one()
 
 
 async def test_update_satec_config(pg_base_config):
@@ -1757,9 +1755,7 @@ async def test_insert_satec_readings(pg_base_config):
         await session.commit()
 
     async with generate_async_session(pg_base_config) as session:
-        rows = (
-            (await session.execute(select(SatecReading).order_by(SatecReading.satec_reading_id))).scalars().all()
-        )
+        rows = (await session.execute(select(SatecReading).order_by(SatecReading.satec_reading_id))).scalars().all()
 
     assert_list_type(SatecReading, rows, count=3)
     for expected, actual in zip(readings, rows, strict=True):
