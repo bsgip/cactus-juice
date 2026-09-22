@@ -13,9 +13,12 @@ from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from cactus_juice.crud import (
     CSIPAUS_CONFIG_VALUE_COLUMNS,
     DEFAULT_MAX_DATE,
+    OCPP_METADATA_VALUE_COLUMNS,
+    OCPP_READING_VALUE_COLUMNS,
     SATEC_CONFIG_VALUE_COLUMNS,
     SATEC_READING_VALUE_COLUMNS,
     TROCA_CONFIG_VALUE_COLUMNS,
+    add_ocpp_readings,
     create_satec_config,
     delete_satec_config,
     fetch_active_default,
@@ -41,6 +44,7 @@ from cactus_juice.crud import (
     upsert_controls,
     upsert_dynamic_price_responses,
     upsert_dynamic_prices,
+    upsert_ocpp_metadata,
 )
 from cactus_juice.csipaus.dto import DefaultValues
 from cactus_juice.model import (
@@ -1235,12 +1239,187 @@ async def test_fetch_ocpp_metadata_empty(pg_empty_config):
         assert await fetch_ocpp_metadata(session) is None
 
 
+@pytest.mark.parametrize("optional_is_none", [True, False])
+async def test_upsert_ocpp_metadata_empty(pg_empty_config, optional_is_none: bool):
+    """Does update work on an empty DB"""
+    new_values = generate_class_instance(OCPPMetadata, optional_is_none=optional_is_none)
+
+    async with generate_async_session(pg_empty_config) as session:
+        await upsert_ocpp_metadata(session, new_values)
+        await session.commit()
+
+    async with generate_async_session(pg_empty_config) as session:
+        rows = (await session.execute(select(OCPPMetadata).order_by(OCPPMetadata.ocpp_metadata_id))).scalars().all()
+        assert len(rows) == 1
+        entry = rows[0]
+        assert_nowish(entry.created_at)
+        for col in OCPP_METADATA_VALUE_COLUMNS:
+            assert getattr(entry, col) == getattr(new_values, col)
+
+
+async def test_upsert_ocpp_metadata(pg_base_config):
+    """A new metadata record is appended - the rest of the history is left untouched."""
+    new_values = generate_class_instance(OCPPMetadata, seed=1001)
+
+    async with generate_async_session(pg_base_config) as session:
+        await upsert_ocpp_metadata(session, new_values)
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        rows = (await session.execute(select(OCPPMetadata).order_by(OCPPMetadata.ocpp_metadata_id))).scalars().all()
+
+    # original 3 + 1 appended
+    assert len(rows) == 4
+    by_id = {r.ocpp_metadata_id: r for r in rows}
+
+    # untouched history
+    assert by_id[1].max_voltage_volts == 1001
+    assert by_id[2].max_voltage_volts == 2001
+    assert by_id[3].max_voltage_volts == 3001
+
+    # brand new record carrying the supplied values
+    appended = by_id[4]
+    assert_nowish(appended.created_at)
+    for col in OCPP_METADATA_VALUE_COLUMNS:
+        assert getattr(appended, col) == getattr(new_values, col)
+
+    # ... and it is the one now reported as current
+    async with generate_async_session(pg_base_config) as session:
+        current = await fetch_ocpp_metadata(session)
+    assert current is not None
+    assert current.ocpp_metadata_id == 4
+
+
+async def test_upsert_ocpp_metadata_noop_when_values_match(pg_base_config):
+    """When the supplied values exactly match the current metadata the call is a no-op - the history is left
+    completely untouched."""
+    async with generate_async_session(pg_base_config) as session:
+        current = await fetch_ocpp_metadata(session)
+        assert current is not None
+        matching_values = clone_class_instance(current)
+
+    async with generate_async_session(pg_base_config) as session:
+        await upsert_ocpp_metadata(session, matching_values)
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        rows = (await session.execute(select(OCPPMetadata).order_by(OCPPMetadata.ocpp_metadata_id))).scalars().all()
+
+    # Untouched - still the original 3 records, and the current metadata (by created_at) is still id 2
+    assert len(rows) == 3
+    async with generate_async_session(pg_base_config) as session:
+        still_current = await fetch_ocpp_metadata(session)
+    assert still_current is not None
+    assert still_current.ocpp_metadata_id == 2
+
+
+@pytest.mark.parametrize("differing_col", OCPP_METADATA_VALUE_COLUMNS)
+async def test_upsert_ocpp_metadata_not_noop_when_a_value_differs(pg_base_config, differing_col: str):
+    """A single differing value column is enough to force a new record to be appended."""
+    async with generate_async_session(pg_base_config) as session:
+        current = await fetch_ocpp_metadata(session)
+        assert current is not None
+        new_values = clone_class_instance(current)
+        setattr(new_values, differing_col, _differing_value(getattr(current, differing_col)))
+
+    async with generate_async_session(pg_base_config) as session:
+        await upsert_ocpp_metadata(session, new_values)
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        rows = (await session.execute(select(OCPPMetadata).order_by(OCPPMetadata.ocpp_metadata_id))).scalars().all()
+
+    assert len(rows) == 4
+    by_id = {r.ocpp_metadata_id: r for r in rows}
+    for col in OCPP_METADATA_VALUE_COLUMNS:
+        assert getattr(by_id[4], col) == getattr(new_values, col)
+
+
+async def test_upsert_ocpp_metadata_no_commit(pg_base_config):
+    """upsert_ocpp_metadata must never commit/rollback on its own - the caller owns the transaction."""
+    new_values = generate_class_instance(OCPPMetadata, seed=1)
+
+    async with generate_async_session(pg_base_config) as session:
+        count_before = (await session.execute(select(func.count()).select_from(OCPPMetadata))).scalar_one()
+
+    # No explicit commit -> nothing sticks
+    async with generate_async_session(pg_base_config) as session:
+        await upsert_ocpp_metadata(session, new_values)
+
+    async with generate_async_session(pg_base_config) as session:
+        assert count_before == (await session.execute(select(func.count()).select_from(OCPPMetadata))).scalar_one()
+
+    # Explicit commit -> sticks
+    async with generate_async_session(pg_base_config) as session:
+        await upsert_ocpp_metadata(session, new_values)
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        assert (count_before + 1) == (
+            await session.execute(select(func.count()).select_from(OCPPMetadata))
+        ).scalar_one()
+
+
+async def test_add_ocpp_readings_empty(pg_empty_config):
+    """An empty list is a no-op - must not error even with nothing else in the DB."""
+    async with generate_async_session(pg_empty_config) as session:
+        await add_ocpp_readings(session, [])
+        await session.commit()
+
+
+async def test_add_ocpp_readings(pg_base_config):
+    readings = [
+        generate_class_instance(OCPPReading, seed=1),
+        generate_class_instance(OCPPReading, seed=2),
+        generate_class_instance(OCPPReading, seed=3),
+    ]
+
+    async with generate_async_session(pg_base_config) as session:
+        count_before = (await session.execute(select(func.count()).select_from(OCPPReading))).scalar_one()
+        await add_ocpp_readings(session, readings)
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        rows = (await session.execute(select(OCPPReading).order_by(OCPPReading.ocpp_reading_id))).scalars().all()
+
+    assert len(rows) == count_before + 3
+    new_rows = rows[count_before:]
+    assert_list_type(OCPPReading, new_rows, count=3)
+    for expected, actual in zip(readings, new_rows, strict=True):
+        assert_nowish(actual.created_at)
+        for col in OCPP_READING_VALUE_COLUMNS:
+            assert getattr(actual, col) == getattr(expected, col)
+
+
+async def test_add_ocpp_readings_no_commit(pg_base_config):
+    """add_ocpp_readings must never commit/rollback on its own - the caller owns the transaction."""
+    readings = [generate_class_instance(OCPPReading, seed=1)]
+
+    async with generate_async_session(pg_base_config) as session:
+        count_before = (await session.execute(select(func.count()).select_from(OCPPReading))).scalar_one()
+
+    async with generate_async_session(pg_base_config) as session:
+        await add_ocpp_readings(session, readings)
+
+    async with generate_async_session(pg_base_config) as session:
+        assert count_before == (await session.execute(select(func.count()).select_from(OCPPReading))).scalar_one()
+
+    async with generate_async_session(pg_base_config) as session:
+        await add_ocpp_readings(session, readings)
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        assert (count_before + 1) == (await session.execute(select(func.count()).select_from(OCPPReading))).scalar_one()
+
+
 def _differing_value(existing: object) -> object:
     """Returns some value guaranteed to differ from existing, preserving type where there's one to preserve."""
     if isinstance(existing, bool):
         return not existing
     if isinstance(existing, int):
         return (existing or 0) + 1
+    if isinstance(existing, float):
+        return (existing or 0.0) + 1.0
     if isinstance(existing, bytes):
         return (existing or b"") + b"-changed"
     if isinstance(existing, str):

@@ -422,6 +422,62 @@ async def fetch_ocpp_metadata(session: AsyncSession) -> OCPPMetadata | None:
     ).scalar_one_or_none()
 
 
+# The mutable columns on OCPPMetadata - excludes the PK and created_at.
+OCPP_METADATA_VALUE_COLUMNS = (
+    "max_voltage_volts",
+    "min_voltage_volts",
+    "max_power_watts",
+    "max_charge_rate_watts",
+    "max_discharge_rate_watts",
+    "set_grad_w",
+)
+
+
+async def upsert_ocpp_metadata(session: AsyncSession, values: OCPPMetadata) -> None:
+    """Inserts a new OCPPMetadata record carrying the specified values - the intent is to always maintain a rolling
+    history of metadata, with the current metadata being the record with the most recent created_at.
+
+    If the current metadata (per fetch_ocpp_metadata) already carries exactly these values this is a no-op - we
+    don't want to fragment the history with records that don't actually change anything.
+
+    does NOT commit any transaction."""
+
+    current = await fetch_ocpp_metadata(session)
+    if current is not None and all(
+        getattr(current, col) == getattr(values, col) for col in OCPP_METADATA_VALUE_COLUMNS
+    ):
+        return
+
+    await session.execute(
+        insert(OCPPMetadata).values(**{col: getattr(values, col) for col in OCPP_METADATA_VALUE_COLUMNS})
+    )
+
+
+# The columns on OCPPReading populated from an OCPP reading - excludes the PK and created_at.
+OCPP_READING_VALUE_COLUMNS = (
+    "reading_start",
+    "frequency_hz",
+    "import_active_power_watts",
+    "export_active_power_watts",
+    "import_reactive_power_var",
+    "export_reactive_power_var",
+    "soc_percent",
+    "voltage_volts",
+)
+
+
+async def add_ocpp_readings(session: AsyncSession, readings: list[OCPPReading]) -> None:
+    """Bulk inserts the specified OCPPReading rows - every poll produces a brand new set of readings, there's no
+    conflict/upsert semantics here.
+
+    does NOT commit any transaction."""
+    if not readings:
+        return
+
+    values = [{col: getattr(r, col) for col in OCPP_READING_VALUE_COLUMNS} for r in readings]
+    await session.execute(insert(OCPPReading).values(values))
+
+
 # The mutable columns on CSIPAusConfig - excludes the PK and created_at.
 CSIPAUS_CONFIG_VALUE_COLUMNS = (
     "is_aggregator",
