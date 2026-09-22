@@ -46,6 +46,10 @@ def test_get_troca_config_defaults_when_unset(client: TestClient):
     assert body["basic_user"] is None
     assert body["has_basic_password"] is False
     assert body["connector_id"] is None
+    assert body["reading_poll_rate_seconds"] is None
+    assert body["ramp_step_seconds"] is None
+    assert body["schedule_poll_rate_seconds"] is None
+    assert body["metadata_poll_rate_seconds"] is None
 
 
 def test_put_then_get_troca_config_round_trips(client: TestClient):
@@ -58,6 +62,10 @@ def test_put_then_get_troca_config_round_trips(client: TestClient):
             "basic_user": "user1",
             "basic_password": "secret",
             "connector_id": "conn-1",
+            "reading_poll_rate_seconds": 30,
+            "ramp_step_seconds": 5,
+            "schedule_poll_rate_seconds": 15,
+            "metadata_poll_rate_seconds": 60,
         },
     )
     assert response.status_code == 200
@@ -67,9 +75,28 @@ def test_put_then_get_troca_config_round_trips(client: TestClient):
     assert put_body["has_basic_password"] is True
     assert put_body["connector_id"] == "conn-1"
     assert put_body["created_at"] is not None
+    assert put_body["reading_poll_rate_seconds"] == 30
+    assert put_body["ramp_step_seconds"] == 5
+    assert put_body["schedule_poll_rate_seconds"] == 15
+    assert put_body["metadata_poll_rate_seconds"] == 60
 
     get_body = client.get("/api/troca-config").json()
     assert get_body == put_body
+
+
+def test_put_troca_config_defaults_polling_rates_when_omitted(client: TestClient):
+    """The polling/ramp rate fields are optional on the request - omitting them should fall back to the
+    documented defaults."""
+    response = client.put(
+        "/api/troca-config",
+        json={"base_url": "https://troca.example.com", "basic_user": "user1", "basic_password": "secret"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["reading_poll_rate_seconds"] == 20
+    assert body["ramp_step_seconds"] == 3
+    assert body["schedule_poll_rate_seconds"] == 10
+    assert body["metadata_poll_rate_seconds"] == 30
 
 
 def test_put_troca_config_without_password_preserves_existing_password(client: TestClient):

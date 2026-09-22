@@ -7,6 +7,10 @@ export interface TrocaConfig {
   basicUser: string | null
   hasBasicPassword: boolean
   connectorId: string | null
+  readingPollRateSeconds: number | null
+  rampStepSeconds: number | null
+  schedulePollRateSeconds: number | null
+  metadataPollRateSeconds: number | null
 }
 
 /** Raw shape returned by the backend (snake_case, matches the FastAPI response model). */
@@ -16,6 +20,10 @@ interface TrocaConfigWire {
   basic_user: string | null
   has_basic_password: boolean
   connector_id: string | null
+  reading_poll_rate_seconds: number | null
+  ramp_step_seconds: number | null
+  schedule_poll_rate_seconds: number | null
+  metadata_poll_rate_seconds: number | null
 }
 
 function fromWire(wire: TrocaConfigWire): TrocaConfig {
@@ -25,6 +33,10 @@ function fromWire(wire: TrocaConfigWire): TrocaConfig {
     basicUser: wire.basic_user,
     hasBasicPassword: wire.has_basic_password,
     connectorId: wire.connector_id,
+    readingPollRateSeconds: wire.reading_poll_rate_seconds,
+    rampStepSeconds: wire.ramp_step_seconds,
+    schedulePollRateSeconds: wire.schedule_poll_rate_seconds,
+    metadataPollRateSeconds: wire.metadata_poll_rate_seconds,
   }
 }
 
@@ -39,6 +51,10 @@ export interface TrocaConfigUpdate {
   basicUser: string
   basicPassword: string
   connectorId: string | null
+  readingPollRateSeconds: number
+  rampStepSeconds: number
+  schedulePollRateSeconds: number
+  metadataPollRateSeconds: number
 }
 
 export async function updateTrocaConfig(values: TrocaConfigUpdate): Promise<TrocaConfig> {
@@ -48,6 +64,10 @@ export async function updateTrocaConfig(values: TrocaConfigUpdate): Promise<Troc
       basic_user: values.basicUser.trim(),
       basic_password: values.basicPassword.trim() ? values.basicPassword : null,
       connector_id: values.connectorId,
+      reading_poll_rate_seconds: values.readingPollRateSeconds,
+      ramp_step_seconds: values.rampStepSeconds,
+      schedule_poll_rate_seconds: values.schedulePollRateSeconds,
+      metadata_poll_rate_seconds: values.metadataPollRateSeconds,
     }),
   )
 }

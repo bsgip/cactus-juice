@@ -235,6 +235,10 @@ def upgrade() -> None:
         sa.Column("basic_user", sa.String(), nullable=False),
         sa.Column("basic_password", sa.String(), nullable=False),
         sa.Column("connector_id", sa.String(), nullable=True),
+        sa.Column("reading_poll_rate_seconds", sa.Integer(), server_default="20", nullable=False),
+        sa.Column("ramp_step_seconds", sa.Integer(), server_default="3", nullable=False),
+        sa.Column("schedule_poll_rate_seconds", sa.Integer(), server_default="10", nullable=False),
+        sa.Column("metadata_poll_rate_seconds", sa.Integer(), server_default="30", nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(op.f("ix_troca_config_created_at"), "troca_config", ["created_at"], unique=False)

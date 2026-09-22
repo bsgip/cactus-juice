@@ -317,6 +317,20 @@ class TrocaConfig(Base):
     # Details about the connection
     connector_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
+    # Polling / scheduling behaviour
+    reading_poll_rate_seconds: Mapped[int] = mapped_column(
+        Integer, server_default="20"
+    )  # How many seconds between polls to the Troca API for readings
+    ramp_step_seconds: Mapped[int] = mapped_column(
+        Integer, server_default="3"
+    )  # How long each step in a ramping schedule should be
+    schedule_poll_rate_seconds: Mapped[int] = mapped_column(
+        Integer, server_default="10"
+    )  # How often the charge schedule should be polled for updates
+    metadata_poll_rate_seconds: Mapped[int] = mapped_column(
+        Integer, server_default="30"
+    )  # How often EVSE nameplate ratings should be polled
+
 
 class SatecConfig(Base):
     """Represents the connection details for polling a single SATEC meter over Modbus - unlike CSIPAusConfig/

@@ -2,7 +2,7 @@ from datetime import datetime
 
 import aiohttp
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cactus_juice.api.deps import get_session
@@ -25,6 +25,10 @@ class TrocaConfigResponse(BaseModel):
     basic_user: str | None
     has_basic_password: bool
     connector_id: str | None
+    reading_poll_rate_seconds: int | None
+    ramp_step_seconds: int | None
+    schedule_poll_rate_seconds: int | None
+    metadata_poll_rate_seconds: int | None
 
     @staticmethod
     def from_model(config: TrocaConfig | None) -> "TrocaConfigResponse":
@@ -35,6 +39,10 @@ class TrocaConfigResponse(BaseModel):
                 basic_user=None,
                 has_basic_password=False,
                 connector_id=None,
+                reading_poll_rate_seconds=None,
+                ramp_step_seconds=None,
+                schedule_poll_rate_seconds=None,
+                metadata_poll_rate_seconds=None,
             )
 
         return TrocaConfigResponse(
@@ -43,6 +51,10 @@ class TrocaConfigResponse(BaseModel):
             basic_user=config.basic_user,
             has_basic_password=config.basic_password is not None,
             connector_id=config.connector_id,
+            reading_poll_rate_seconds=config.reading_poll_rate_seconds,
+            ramp_step_seconds=config.ramp_step_seconds,
+            schedule_poll_rate_seconds=config.schedule_poll_rate_seconds,
+            metadata_poll_rate_seconds=config.metadata_poll_rate_seconds,
         )
 
 
@@ -55,6 +67,10 @@ class TrocaConfigRequest(BaseModel):
     basic_user: str
     basic_password: str | None = None
     connector_id: str | None = None
+    reading_poll_rate_seconds: int = Field(default=20, gt=0)
+    ramp_step_seconds: int = Field(default=3, gt=0)
+    schedule_poll_rate_seconds: int = Field(default=10, gt=0)
+    metadata_poll_rate_seconds: int = Field(default=30, gt=0)
 
 
 class TrocaConnectorResponse(BaseModel):
@@ -107,6 +123,10 @@ async def put_troca_config(
         basic_user=body.basic_user,
         basic_password=new_basic_password,
         connector_id=body.connector_id,
+        reading_poll_rate_seconds=body.reading_poll_rate_seconds,
+        ramp_step_seconds=body.ramp_step_seconds,
+        schedule_poll_rate_seconds=body.schedule_poll_rate_seconds,
+        metadata_poll_rate_seconds=body.metadata_poll_rate_seconds,
     )
 
     await update_troca_config(session, values)

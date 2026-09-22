@@ -6,6 +6,7 @@ import {
   Fieldset,
   Group,
   LoadingOverlay,
+  NumberInput,
   Paper,
   PasswordInput,
   Select,
@@ -36,6 +37,10 @@ interface FormValues {
   basicUser: string
   basicPassword: string
   connectorId: string | null
+  readingPollRateSeconds: number | ''
+  rampStepSeconds: number | ''
+  schedulePollRateSeconds: number | ''
+  metadataPollRateSeconds: number | ''
 }
 
 function valuesFromConfig(config: TrocaConfig): FormValues {
@@ -44,6 +49,10 @@ function valuesFromConfig(config: TrocaConfig): FormValues {
     basicUser: config.basicUser ?? '',
     basicPassword: '',
     connectorId: config.connectorId,
+    readingPollRateSeconds: config.readingPollRateSeconds ?? 20,
+    rampStepSeconds: config.rampStepSeconds ?? 3,
+    schedulePollRateSeconds: config.schedulePollRateSeconds ?? 10,
+    metadataPollRateSeconds: config.metadataPollRateSeconds ?? 30,
   }
 }
 
@@ -65,10 +74,18 @@ export function TrocaConfigPage() {
       basicUser: null,
       hasBasicPassword: false,
       connectorId: null,
+      readingPollRateSeconds: null,
+      rampStepSeconds: null,
+      schedulePollRateSeconds: null,
+      metadataPollRateSeconds: null,
     }),
     validate: {
       basicPassword: (value) =>
         !isConfigured && !value.trim() ? 'Required the first time a connection is configured' : null,
+      readingPollRateSeconds: (value) => (typeof value === 'number' && value > 0 ? null : 'Must be greater than 0'),
+      rampStepSeconds: (value) => (typeof value === 'number' && value > 0 ? null : 'Must be greater than 0'),
+      schedulePollRateSeconds: (value) => (typeof value === 'number' && value > 0 ? null : 'Must be greater than 0'),
+      metadataPollRateSeconds: (value) => (typeof value === 'number' && value > 0 ? null : 'Must be greater than 0'),
     },
   })
 
@@ -136,6 +153,10 @@ export function TrocaConfigPage() {
               basicUser: values.basicUser,
               basicPassword: values.basicPassword,
               connectorId: values.connectorId,
+              readingPollRateSeconds: Number(values.readingPollRateSeconds),
+              rampStepSeconds: Number(values.rampStepSeconds),
+              schedulePollRateSeconds: Number(values.schedulePollRateSeconds),
+              metadataPollRateSeconds: Number(values.metadataPollRateSeconds),
             }),
           )}
         >
@@ -166,6 +187,44 @@ export function TrocaConfigPage() {
                 required={!isConfigured}
                 {...form.getInputProps('basicPassword')}
               />
+            </Stack>
+
+            <Divider />
+
+            <Stack gap="sm">
+              <Text fw={600}>Polling</Text>
+              <Group grow>
+                <NumberInput
+                  label="Reading poll rate"
+                  description="Seconds between polls to the Troca API for readings"
+                  min={1}
+                  required
+                  {...form.getInputProps('readingPollRateSeconds')}
+                />
+                <NumberInput
+                  label="Ramp step"
+                  description="Seconds per step in a ramping schedule"
+                  min={1}
+                  required
+                  {...form.getInputProps('rampStepSeconds')}
+                />
+              </Group>
+              <Group grow>
+                <NumberInput
+                  label="Schedule poll rate"
+                  description="Seconds between polls for charge schedule updates"
+                  min={1}
+                  required
+                  {...form.getInputProps('schedulePollRateSeconds')}
+                />
+                <NumberInput
+                  label="Metadata poll rate"
+                  description="Seconds between polls for EVSE nameplate ratings"
+                  min={1}
+                  required
+                  {...form.getInputProps('metadataPollRateSeconds')}
+                />
+              </Group>
             </Stack>
 
             <Divider />

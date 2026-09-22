@@ -1419,6 +1419,10 @@ async def test_fetch_troca_config(pg_base_config):
     assert actual.basic_user == "u2"
     assert actual.basic_password == "p2"
     assert actual.connector_id == "c2"
+    assert actual.reading_poll_rate_seconds == 20
+    assert actual.ramp_step_seconds == 3
+    assert actual.schedule_poll_rate_seconds == 10
+    assert actual.metadata_poll_rate_seconds == 30
 
 
 async def test_fetch_troca_config_empty(pg_empty_config):

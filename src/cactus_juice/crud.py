@@ -471,6 +471,10 @@ TROCA_CONFIG_VALUE_COLUMNS = (
     "basic_user",
     "basic_password",
     "connector_id",
+    "reading_poll_rate_seconds",
+    "ramp_step_seconds",
+    "schedule_poll_rate_seconds",
+    "metadata_poll_rate_seconds",
 )
 
 
