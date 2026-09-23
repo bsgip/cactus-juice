@@ -469,12 +469,12 @@ async def test_upsert_control_responses(pg_base_config, optional_is_none: bool):
 @pytest.mark.parametrize(
     "now, start, limit, expected_ids",
     [
-        (datetime.min, 0, 99, [2, 3, 4, 6]),
-        (datetime(2026, 1, 1, tzinfo=UTC), 0, 99, [2, 3, 4, 6]),
-        (datetime.min, 1, 2, [3, 4]),  # Paging
-        (datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC), 0, 99, [3, 4, 6]),
-        (datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC), 0, 99, [6]),
-        (datetime(2026, 1, 1, 0, 15, 0, tzinfo=UTC), 0, 99, []),
+        (datetime.min, 0, 99, []),  # now is before every not_before value - nothing is due yet
+        (datetime(2026, 1, 1, tzinfo=UTC), 0, 99, [2]),
+        (datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC), 0, 99, [2, 3, 4]),
+        (datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC), 1, 2, [3, 4]),  # Paging
+        (datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC), 0, 99, [2, 3, 4, 6]),
+        (datetime(2026, 1, 1, 0, 15, 0, tzinfo=UTC), 0, 99, [2, 3, 4, 6]),  # future now still includes all due
     ],
 )
 async def test_fetch_unsent_control_responses(
@@ -490,7 +490,7 @@ async def test_fetch_unsent_control_responses(
 async def test_fetch_unsent_control_responses_include_control_default(pg_base_config):
     """By default the control relationship is left as lazy='raise' and accessing it errors"""
     async with generate_async_session(pg_base_config) as session:
-        actual = await fetch_unsent_control_responses(session, now=datetime.min)
+        actual = await fetch_unsent_control_responses(session, now=datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC))
         assert [e.csipaus_control_response_id for e in actual] == [2, 3, 4, 6]
 
         for response in actual:
@@ -505,7 +505,9 @@ async def test_fetch_unsent_control_responses_include_control(pg_base_config):
     expected_mrids = {1: "1111", 2: "2222", 3: "3333", 4: "4444"}
 
     async with generate_async_session(pg_base_config) as session:
-        actual = await fetch_unsent_control_responses(session, now=datetime.min, include_control=True)
+        actual = await fetch_unsent_control_responses(
+            session, now=datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC), include_control=True
+        )
         assert [e.csipaus_control_response_id for e in actual] == [2, 3, 4, 6]
 
         for response in actual:
@@ -895,12 +897,12 @@ async def test_upsert_dynamic_price_responses(pg_base_config, optional_is_none: 
 @pytest.mark.parametrize(
     "now, start, limit, expected_ids",
     [
-        (datetime.min, 0, 99, [2, 3, 4, 6]),
-        (datetime(2026, 1, 1, tzinfo=UTC), 0, 99, [2, 3, 4, 6]),
-        (datetime.min, 1, 2, [3, 4]),  # Paging
-        (datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC), 0, 99, [3, 4, 6]),
-        (datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC), 0, 99, [6]),
-        (datetime(2026, 1, 1, 0, 15, 0, tzinfo=UTC), 0, 99, []),
+        (datetime.min, 0, 99, []),  # now is before every not_before value - nothing is due yet
+        (datetime(2026, 1, 1, tzinfo=UTC), 0, 99, [2]),
+        (datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC), 0, 99, [2, 3, 4]),
+        (datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC), 1, 2, [3, 4]),  # Paging
+        (datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC), 0, 99, [2, 3, 4, 6]),
+        (datetime(2026, 1, 1, 0, 15, 0, tzinfo=UTC), 0, 99, [2, 3, 4, 6]),  # future now still includes all due
     ],
 )
 async def test_fetch_unsent_dynamic_price_responses(
@@ -916,7 +918,7 @@ async def test_fetch_unsent_dynamic_price_responses(
 async def test_fetch_unsent_dynamic_price_responses_include_dynamic_price_default(pg_base_config):
     """By default the dynamic_price relationship is left as lazy='raise' and accessing it errors"""
     async with generate_async_session(pg_base_config) as session:
-        actual = await fetch_unsent_dynamic_price_responses(session, now=datetime.min)
+        actual = await fetch_unsent_dynamic_price_responses(session, now=datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC))
         assert [e.csipaus_dynamic_price_response_id for e in actual] == [2, 3, 4, 6]
 
         for response in actual:
@@ -931,7 +933,9 @@ async def test_fetch_unsent_dynamic_price_responses_include_dynamic_price(pg_bas
     expected_mrids = {1: "1111", 2: "2222", 3: "3333", 4: "4444"}
 
     async with generate_async_session(pg_base_config) as session:
-        actual = await fetch_unsent_dynamic_price_responses(session, now=datetime.min, include_dynamic_price=True)
+        actual = await fetch_unsent_dynamic_price_responses(
+            session, now=datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC), include_dynamic_price=True
+        )
         assert [e.csipaus_dynamic_price_response_id for e in actual] == [2, 3, 4, 6]
 
         for response in actual:

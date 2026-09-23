@@ -161,7 +161,7 @@ async def fetch_unsent_control_responses(
     stmt = (
         select(CSIPAusControlResponse)
         .where(CSIPAusControlResponse.sent_at.is_(None))
-        .where(CSIPAusControlResponse.not_before >= now)
+        .where(CSIPAusControlResponse.not_before <= now)
         .order_by(CSIPAusControlResponse.csipaus_control_response_id.asc())
         .offset(start)
         .limit(limit)
@@ -298,7 +298,7 @@ async def fetch_unsent_dynamic_price_responses(
     stmt = (
         select(CSIPAusDynamicPriceResponse)
         .where(CSIPAusDynamicPriceResponse.sent_at.is_(None))
-        .where(CSIPAusDynamicPriceResponse.not_before >= now)
+        .where(CSIPAusDynamicPriceResponse.not_before <= now)
         .order_by(CSIPAusDynamicPriceResponse.csipaus_dynamic_price_response_id.asc())
         .offset(start)
         .limit(limit)
