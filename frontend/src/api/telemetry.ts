@@ -61,6 +61,15 @@ export interface SatecReading {
   frequency: number
 }
 
+/** Mirrors cactus_juice.api.routers.telemetry.TaskHealthResponse. lastRunAt is null when the task is registered
+ * (see cactus_juice.tasks.TASKS) but has never reported in. */
+export interface TaskHealth {
+  taskName: string
+  lastRunAt: string | null
+  lastExceptionAt: string | null
+  lastException: string | null
+}
+
 /** Mirrors cactus_juice.api.routers.telemetry.TelemetrySnapshotResponse. */
 export interface TelemetrySnapshot {
   now: string
@@ -71,6 +80,7 @@ export interface TelemetrySnapshot {
   ocppReadings: OcppReading[]
   ocppMetadata: OcppMetadata | null
   satecReadings: SatecReading[]
+  taskHealth: TaskHealth[]
 }
 
 /** Raw shapes returned by the backend (snake_case, matches the FastAPI response models). price_kwh is a Decimal
@@ -128,6 +138,13 @@ interface SatecReadingWire {
   frequency: number
 }
 
+interface TaskHealthWire {
+  task_name: string
+  last_run_at: string | null
+  last_exception_at: string | null
+  last_exception: string | null
+}
+
 interface TelemetrySnapshotWire {
   now: string
   window_start: string
@@ -137,6 +154,7 @@ interface TelemetrySnapshotWire {
   ocpp_readings: OcppReadingWire[]
   ocpp_metadata: OcppMetadataWire | null
   satec_readings: SatecReadingWire[]
+  task_health: TaskHealthWire[]
 }
 
 function scheduledValuesFromWire(wire: ScheduledValuesWire): ScheduledValues {
@@ -202,6 +220,15 @@ function satecReadingFromWire(wire: SatecReadingWire): SatecReading {
   }
 }
 
+function taskHealthFromWire(wire: TaskHealthWire): TaskHealth {
+  return {
+    taskName: wire.task_name,
+    lastRunAt: wire.last_run_at,
+    lastExceptionAt: wire.last_exception_at,
+    lastException: wire.last_exception,
+  }
+}
+
 function fromWire(wire: TelemetrySnapshotWire): TelemetrySnapshot {
   return {
     now: wire.now,
@@ -212,6 +239,7 @@ function fromWire(wire: TelemetrySnapshotWire): TelemetrySnapshot {
     ocppReadings: wire.ocpp_readings.map(ocppReadingFromWire),
     ocppMetadata: wire.ocpp_metadata ? ocppMetadataFromWire(wire.ocpp_metadata) : null,
     satecReadings: wire.satec_readings.map(satecReadingFromWire),
+    taskHealth: wire.task_health.map(taskHealthFromWire),
   }
 }
 

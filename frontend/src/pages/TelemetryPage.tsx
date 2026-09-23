@@ -1,6 +1,6 @@
-import { Alert, Badge, Group, Paper, SimpleGrid, Stack, Text } from '@mantine/core'
+import { Alert, Badge, Box, Group, Paper, SimpleGrid, Stack, Text } from '@mantine/core'
 import { LineChart, type LineChartSeries } from '@mantine/charts'
-import { IconAlertCircle, IconHeartbeat } from '@tabler/icons-react'
+import { IconAlertCircle } from '@tabler/icons-react'
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
@@ -11,11 +11,72 @@ import {
   type OcppReading,
   type SatecReading,
   type ScheduledValues,
+  type TaskHealth,
 } from '../api/telemetry'
 import { PageHeading } from '../layout/AppLayout'
 
 const SNAPSHOT_QUERY_KEY = ['telemetry-snapshot']
 const REFRESH_INTERVAL_MS = 10_000
+
+/** A task whose last run is older than this (or that has never run at all) is considered stale, even if it
+ * hasn't reported an error - it may simply have stopped ticking. */
+const STALE_THRESHOLD_MS = 5 * 60 * 1000
+
+type TaskHealthStatus = 'green' | 'yellow' | 'red'
+
+const TASK_HEALTH_COLORS: Record<TaskHealthStatus, string> = { green: 'green', yellow: 'yellow', red: 'red' }
+
+/** Red: the most recent run failed (its exception was recorded at/after the run itself). Yellow: no record
+ * exists yet, or the last run was more than STALE_THRESHOLD_MS ago. Green: otherwise. */
+function taskHealthStatus(health: TaskHealth, nowMs: number): TaskHealthStatus {
+  if (health.lastRunAt === null) return 'yellow'
+
+  const lastRunMs = new Date(health.lastRunAt).getTime()
+  if (health.lastExceptionAt !== null && new Date(health.lastExceptionAt).getTime() >= lastRunMs) return 'red'
+  if (nowMs - lastRunMs > STALE_THRESHOLD_MS) return 'yellow'
+  return 'green'
+}
+
+function taskHealthLabel(health: TaskHealth, status: TaskHealthStatus): string {
+  if (health.lastRunAt === null) return 'No data'
+  if (status === 'red') return 'Error'
+  if (status === 'yellow') return 'Stale'
+  return 'Healthy'
+}
+
+function TaskHealthRow({ health, nowMs }: { health: TaskHealth; nowMs: number }) {
+  const status = taskHealthStatus(health, nowMs)
+  const label = taskHealthLabel(health, status)
+
+  return (
+    <Stack gap={2}>
+      <Group justify="space-between" gap="xs" wrap="nowrap">
+        <Group gap="xs" wrap="nowrap">
+          <Box
+            w={8}
+            h={8}
+            flex="0 0 auto"
+            style={{ borderRadius: '50%', backgroundColor: `var(--mantine-color-${TASK_HEALTH_COLORS[status]}-6)` }}
+          />
+          <Text size="sm" fw={500}>
+            {health.taskName}
+          </Text>
+        </Group>
+        <Badge color={TASK_HEALTH_COLORS[status]} variant="light">
+          {label}
+        </Badge>
+      </Group>
+      <Text size="xs" c="dimmed">
+        {health.lastRunAt ? `Last run ${new Date(health.lastRunAt).toLocaleString()}` : 'Never run'}
+      </Text>
+      {status === 'red' && health.lastException ? (
+        <Text size="xs" c="red" lineClamp={2}>
+          {health.lastException}
+        </Text>
+      ) : null}
+    </Stack>
+  )
+}
 
 /** Colors cycled (in this fixed order) across whichever SatecConfig labels are present - deliberately disjoint
  * from the static series colors used elsewhere in each panel. */
@@ -365,17 +426,26 @@ export function TelemetryPage() {
         </Paper>
 
         <Paper withBorder p="md">
-          <Group justify="space-between" mb="xs">
-            <Text fw={600} size="sm">
-              Health
-            </Text>
-            <Badge color="gray" variant="light" leftSection={<IconHeartbeat size={12} />}>
-              Not implemented
-            </Badge>
-          </Group>
-          <Text size="sm" c="dimmed">
-            Device/connection health diagnostics will appear here once available.
+          <Text fw={600} size="sm" mb="xs">
+            Task health
           </Text>
+          {snapshot ? (
+            snapshot.taskHealth.length > 0 ? (
+              <Stack gap="sm">
+                {snapshot.taskHealth.map((health) => (
+                  <TaskHealthRow key={health.taskName} health={health} nowMs={new Date(snapshot.now).getTime()} />
+                ))}
+              </Stack>
+            ) : (
+              <Text size="sm" c="dimmed">
+                No background tasks are registered.
+              </Text>
+            )
+          ) : (
+            <Text size="sm" c="dimmed">
+              {isLoading ? 'Loading…' : 'No health data available'}
+            </Text>
+          )}
         </Paper>
       </SimpleGrid>
 

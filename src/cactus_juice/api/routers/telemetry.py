@@ -12,10 +12,12 @@ from cactus_juice.crud import (
     fetch_ocpp_readings_in_range,
     fetch_satec_configs,
     fetch_satec_readings_in_range,
+    fetch_task_health,
 )
 from cactus_juice.csipaus.controls import calculate_schedule_values
 from cactus_juice.csipaus.dto import ScheduledControlValues
-from cactus_juice.model import CSIPAusDynamicPrice, OCPPMetadata, OCPPReading, SatecReading
+from cactus_juice.model import CSIPAusDynamicPrice, OCPPMetadata, OCPPReading, SatecReading, TaskHealth
+from cactus_juice.tasks import TASKS
 
 router = APIRouter(prefix="/api/telemetry", tags=["telemetry"])
 
@@ -148,6 +150,29 @@ class SatecReadingResponse(BaseModel):
         )
 
 
+class TaskHealthResponse(BaseModel):
+    """last_run_at is None when task_name is a registered task (see cactus_juice.tasks.TASKS) that has never
+    reported a TaskHealth row - eg it hasn't run yet, or the deployment doesn't run it at all."""
+
+    task_name: str
+    last_run_at: datetime | None
+    last_exception_at: datetime | None
+    last_exception: str | None
+
+    @staticmethod
+    def from_model(task_name: str, h: TaskHealth | None) -> "TaskHealthResponse":
+        if h is None:
+            return TaskHealthResponse(
+                task_name=task_name, last_run_at=None, last_exception_at=None, last_exception=None
+            )
+        return TaskHealthResponse(
+            task_name=h.task_name,
+            last_run_at=h.last_run_at,
+            last_exception_at=h.last_exception_at,
+            last_exception=h.last_exception,
+        )
+
+
 class TelemetrySnapshotResponse(BaseModel):
     now: datetime
     window_start: datetime
@@ -157,6 +182,7 @@ class TelemetrySnapshotResponse(BaseModel):
     ocpp_readings: list[OCPPReadingResponse]
     ocpp_metadata: OCPPMetadataResponse | None
     satec_readings: list[SatecReadingResponse]
+    task_health: list[TaskHealthResponse]
 
 
 @router.get("/snapshot", response_model=TelemetrySnapshotResponse)
@@ -178,6 +204,11 @@ async def get_telemetry_snapshot(session: AsyncSession = Depends(get_session)) -
     satec_configs = await fetch_satec_configs(session)
     satec_readings = await fetch_satec_readings_in_range(session, window_start, window_end)
 
+    # One entry per registered task (see cactus_juice.tasks.TASKS) - a task with no TaskHealth row yet (never
+    # run) still gets an entry, just with last_run_at=None, so the frontend can tell "missing" apart from
+    # "stale" rather than only seeing whatever happens to already be in the table.
+    task_health_by_name = {h.task_name: h for h in await fetch_task_health(session)}
+
     # Readings only carry the FK id, not the label - resolve it here so the frontend can group/label series
     # without needing to know about SatecConfig at all. Falls back to a synthetic label if the parent config
     # was deleted after the reading was recorded.
@@ -194,5 +225,8 @@ async def get_telemetry_snapshot(session: AsyncSession = Depends(get_session)) -
         satec_readings=[
             SatecReadingResponse.from_model(r, satec_labels_by_id.get(r.satec_config_id, f"Meter {r.satec_config_id}"))
             for r in satec_readings
+        ],
+        task_health=[
+            TaskHealthResponse.from_model(name, task_health_by_name.get(name)) for name in sorted(TASKS)
         ],
     )

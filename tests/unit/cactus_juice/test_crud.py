@@ -34,6 +34,7 @@ from cactus_juice.crud import (
     fetch_satec_config,
     fetch_satec_configs,
     fetch_satec_readings_in_range,
+    fetch_task_health,
     fetch_troca_config,
     fetch_unsent_control_responses,
     fetch_unsent_dynamic_price_responses,
@@ -47,6 +48,7 @@ from cactus_juice.crud import (
     upsert_dynamic_price_responses,
     upsert_dynamic_prices,
     upsert_ocpp_metadata,
+    upsert_task_health,
 )
 from cactus_juice.csipaus.dto import DefaultValues
 from cactus_juice.model import (
@@ -60,6 +62,7 @@ from cactus_juice.model import (
     OCPPReading,
     SatecConfig,
     SatecReading,
+    TaskHealth,
     TrocaConfig,
 )
 
@@ -2091,6 +2094,108 @@ async def test_fetch_satec_readings_in_range_empty_db(pg_empty_config):
     async with generate_async_session(pg_empty_config) as session:
         actual = await fetch_satec_readings_in_range(session, readings_from=datetime.min, readings_to=DEFAULT_MAX_DATE)
     assert actual == []
+
+
+async def test_upsert_task_health_inserts_new_row(pg_empty_config):
+    """A task_name with no existing row gets inserted verbatim."""
+    run_at = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+
+    async with generate_async_session(pg_empty_config) as session:
+        await upsert_task_health(session, "sometask", run_at)
+        await session.commit()
+
+    async with generate_async_session(pg_empty_config) as session:
+        rows = await fetch_task_health(session)
+    assert_list_type(TaskHealth, rows, count=1)
+    assert rows[0].task_name == "sometask"
+    assert rows[0].last_run_at == run_at
+    assert rows[0].last_exception_at is None
+    assert rows[0].last_exception is None
+
+
+async def test_upsert_task_health_inserts_new_row_with_exception(pg_empty_config):
+    """A task_name with no existing row and a failing first run records the failure alongside last_run_at."""
+    run_at = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+
+    async with generate_async_session(pg_empty_config) as session:
+        await upsert_task_health(session, "sometask", run_at, exception="boom")
+        await session.commit()
+
+    async with generate_async_session(pg_empty_config) as session:
+        rows = await fetch_task_health(session)
+    assert len(rows) == 1
+    assert rows[0].last_run_at == run_at
+    assert rows[0].last_exception_at == run_at
+    assert rows[0].last_exception == "boom"
+
+
+async def test_upsert_task_health_success_bumps_last_run_at_only(pg_empty_config):
+    """A successful run after a previous failure bumps last_run_at but leaves the recorded failure untouched -
+    it stands as a record of the task's last failure until superseded by a new one."""
+    first_run_at = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+    second_run_at = datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC)
+
+    async with generate_async_session(pg_empty_config) as session:
+        await upsert_task_health(session, "sometask", first_run_at, exception="boom")
+        await session.commit()
+
+    async with generate_async_session(pg_empty_config) as session:
+        await upsert_task_health(session, "sometask", second_run_at, exception=None)
+        await session.commit()
+
+    async with generate_async_session(pg_empty_config) as session:
+        rows = await fetch_task_health(session)
+    assert len(rows) == 1
+    assert rows[0].last_run_at == second_run_at
+    assert rows[0].last_exception_at == first_run_at  # untouched
+    assert rows[0].last_exception == "boom"  # untouched
+
+
+async def test_upsert_task_health_new_failure_replaces_old_one(pg_empty_config):
+    """A failing run after a previous failure replaces the recorded exception with the new one."""
+    first_run_at = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+    second_run_at = datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC)
+
+    async with generate_async_session(pg_empty_config) as session:
+        await upsert_task_health(session, "sometask", first_run_at, exception="boom")
+        await session.commit()
+
+    async with generate_async_session(pg_empty_config) as session:
+        await upsert_task_health(session, "sometask", second_run_at, exception="bang")
+        await session.commit()
+
+    async with generate_async_session(pg_empty_config) as session:
+        rows = await fetch_task_health(session)
+    assert len(rows) == 1
+    assert rows[0].last_run_at == second_run_at
+    assert rows[0].last_exception_at == second_run_at
+    assert rows[0].last_exception == "bang"
+
+
+async def test_upsert_task_health_no_commit(pg_empty_config):
+    """upsert_task_health must never commit/rollback on its own - the caller owns the transaction."""
+    async with generate_async_session(pg_empty_config) as session:
+        await upsert_task_health(session, "sometask", datetime(2026, 1, 1, tzinfo=UTC))
+        await session.rollback()
+
+    async with generate_async_session(pg_empty_config) as session:
+        assert await fetch_task_health(session) == []
+
+
+async def test_fetch_task_health_ordered_by_task_name(pg_empty_config):
+    async with generate_async_session(pg_empty_config) as session:
+        await upsert_task_health(session, "zebra", datetime(2026, 1, 1, tzinfo=UTC))
+        await upsert_task_health(session, "alpha", datetime(2026, 1, 1, tzinfo=UTC))
+        await session.commit()
+
+    async with generate_async_session(pg_empty_config) as session:
+        rows = await fetch_task_health(session)
+    assert [r.task_name for r in rows] == ["alpha", "zebra"]
+
+
+async def test_fetch_task_health_empty_db(pg_empty_config):
+    async with generate_async_session(pg_empty_config) as session:
+        assert await fetch_task_health(session) == []
 
 
 async def test_csipaus_default_rejects_overlapping_active_range(pg_base_config):

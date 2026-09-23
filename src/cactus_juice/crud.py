@@ -18,6 +18,7 @@ from cactus_juice.model import (
     OCPPReading,
     SatecConfig,
     SatecReading,
+    TaskHealth,
     TrocaConfig,
 )
 
@@ -690,6 +691,44 @@ async def insert_satec_readings(session: AsyncSession, readings: list[SatecReadi
 
     values = [{col: getattr(r, col) for col in SATEC_READING_VALUE_COLUMNS} for r in readings]
     await session.execute(insert(SatecReading).values(values))
+
+
+async def upsert_task_health(
+    session: AsyncSession, task_name: str, run_at: datetime, exception: str | None = None
+) -> None:
+    """Upserts the TaskHealth row for task_name - always bumps last_run_at to run_at.
+
+    If exception is supplied, last_exception_at is also set to run_at and last_exception to that string -
+    together they record this run as the task's most recent failure. If exception is None (this run succeeded),
+    any existing last_exception_at/last_exception from a previous failure is left untouched, so it continues to
+    show the task's last failure rather than being wiped away by every subsequent success.
+
+    does NOT commit any transaction."""
+
+    insert_stmt = pg_insert(TaskHealth).values(
+        task_name=task_name,
+        last_run_at=run_at,
+        last_exception_at=run_at if exception is not None else None,
+        last_exception=exception,
+    )
+    excluded = insert_stmt.excluded
+
+    stmt = insert_stmt.on_conflict_do_update(
+        index_elements=["task_name"],
+        set_={
+            "last_run_at": excluded.last_run_at,
+            "last_exception_at": func.coalesce(excluded.last_exception_at, TaskHealth.last_exception_at),
+            "last_exception": func.coalesce(excluded.last_exception, TaskHealth.last_exception),
+        },
+    )
+
+    await session.execute(stmt)
+
+
+async def fetch_task_health(session: AsyncSession) -> Sequence[TaskHealth]:
+    """Fetches the TaskHealth row for every task that has ever reported in, ordered by task_name ASC."""
+
+    return (await session.execute(select(TaskHealth).order_by(TaskHealth.task_name))).scalars().all()
 
 
 async def fetch_satec_readings_in_range(

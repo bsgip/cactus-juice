@@ -12,9 +12,10 @@ from psycopg import Connection
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cactus_juice.api.deps import get_session
-from cactus_juice.crud import insert_satec_readings
+from cactus_juice.crud import insert_satec_readings, upsert_task_health
 from cactus_juice.main import create_app
 from cactus_juice.model import SatecReading
+from cactus_juice.tasks import TASKS
 
 
 def _make_client(db: Connection) -> Generator[TestClient]:
@@ -70,7 +71,8 @@ def _seed_satec_readings(db: Connection) -> list[SatecReading]:
 
 def test_get_snapshot_empty_db(client: TestClient):
     """With nothing in the DB, the snapshot should still resolve to a well-formed (mostly empty) response - the
-    schedule always has at least the implied "no controls in effect" entry."""
+    schedule always has at least the implied "no controls in effect" entry. task_health still carries an entry
+    per registered task (see cactus_juice.tasks.TASKS), just with last_run_at/last_exception_at all None."""
     response = client.get("/api/telemetry/snapshot")
     assert response.status_code == 200
 
@@ -81,6 +83,11 @@ def test_get_snapshot_empty_db(client: TestClient):
     assert body["ocpp_readings"] == []
     assert body["ocpp_metadata"] is None
     assert body["satec_readings"] == []
+    assert [h["task_name"] for h in body["task_health"]] == sorted(TASKS)
+    for h in body["task_health"]:
+        assert h["last_run_at"] is None
+        assert h["last_exception_at"] is None
+        assert h["last_exception"] is None
 
 
 @freeze_time("2026-01-01T00:02:00Z")
@@ -130,3 +137,37 @@ def test_get_snapshot_seeded(seeded_client: TestClient, pg_base_config: Connecti
         assert actual["total_kvar"] == expected_reading.total_kvar
         assert actual["v_avg_ln"] == expected_reading.v_avg_ln
         assert actual["frequency"] == expected_reading.frequency
+
+
+def test_get_snapshot_task_health(client: TestClient, pg_empty_config: Connection):
+    """One registered task (see cactus_juice.tasks.TASKS) with a healthy run, one that's currently failing -
+    both are reported verbatim; there's no third registered task to exercise the "never run" (None) case here,
+    that's covered by test_get_snapshot_empty_db."""
+    task_names = sorted(TASKS)
+    assert len(task_names) >= 2, "expected at least 2 registered tasks to exercise this test"
+    healthy_task, failing_task = task_names[0], task_names[1]
+
+    async def _seed() -> None:
+        async with generate_async_session(pg_empty_config) as session:
+            await upsert_task_health(session, healthy_task, datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC))
+            await upsert_task_health(
+                session, failing_task, datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC), exception="connection refused"
+            )
+            await session.commit()
+
+    asyncio.run(_seed())
+
+    response = client.get("/api/telemetry/snapshot")
+    assert response.status_code == 200
+
+    body = response.json()
+    by_name = {h["task_name"]: h for h in body["task_health"]}
+    assert set(by_name) == set(task_names)
+
+    assert by_name[healthy_task]["last_run_at"] == "2026-01-01T00:00:00Z"
+    assert by_name[healthy_task]["last_exception_at"] is None
+    assert by_name[healthy_task]["last_exception"] is None
+
+    assert by_name[failing_task]["last_run_at"] == "2026-01-01T00:00:00Z"
+    assert by_name[failing_task]["last_exception_at"] == "2026-01-01T00:00:00Z"
+    assert by_name[failing_task]["last_exception"] == "connection refused"

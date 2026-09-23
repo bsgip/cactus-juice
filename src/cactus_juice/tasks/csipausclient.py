@@ -3,13 +3,16 @@ import logging
 import signal
 from datetime import UTC, datetime, timedelta
 
-from cactus_juice.crud import fetch_csipaus_config
+from cactus_juice.crud import fetch_csipaus_config, upsert_task_health
 from cactus_juice.csipaus.client import ClientState, run_polls, run_responses
 from cactus_juice.csipaus.config import build_csipaus_context
 from cactus_juice.db import DatabaseConnection
 from cactus_juice.settings import CactusJuiceSettings
 
 logger = logging.getLogger(__name__)
+
+# Matches this task's key in cactus_juice.tasks.TASKS - used as the TaskHealth row's task_name.
+TASK_NAME = "csipausclient"
 
 # How often run_responses (and the "is the config still current" check) is run. This is deliberately decoupled
 # from the poll/post cadence reported by run_polls - responses should go out promptly regardless of how far away
@@ -68,6 +71,21 @@ async def _refresh_state(
     return ClientState.new_instance(context, db), new_config_id
 
 
+async def _record_health(db: DatabaseConnection, exception: BaseException | None) -> None:
+    """Upserts this task's TaskHealth row to reflect a tick just having run (and, if exception is given, that
+    it failed) - failures here are logged and swallowed so a health-tracking hiccup never masks the tick's own
+    error handling."""
+
+    try:
+        async with db.session_maker() as session:
+            await upsert_task_health(
+                session, TASK_NAME, datetime.now(UTC), str(exception) if exception is not None else None
+            )
+            await session.commit()
+    except Exception:
+        logger.exception(f"Failed to record task health for '{TASK_NAME}'.")
+
+
 async def run_csipaus_client_task(settings: CactusJuiceSettings) -> None:
     """Continuously runs the CSIP-Aus client against whatever CSIPAusConfig is currently the active one.
 
@@ -102,8 +120,11 @@ async def run_csipaus_client_task(settings: CactusJuiceSettings) -> None:
 
                     if datetime.now(UTC) >= next_poll_at:
                         next_poll_at = await run_polls(state)
-            except Exception:
+            except Exception as exc:
                 logger.exception("Unhandled exception in CSIP-Aus client task - will retry shortly.")
+                await _record_health(db, exc)
+            else:
+                await _record_health(db, None)
 
             # Sleep for RESPONSE_INTERVAL, but wake immediately (rather than up to RESPONSE_INTERVAL late) if a
             # shutdown has been requested in the meantime.

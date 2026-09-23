@@ -3,11 +3,15 @@ import logging
 import signal
 from datetime import UTC, datetime
 
+from cactus_juice.crud import upsert_task_health
 from cactus_juice.db import DatabaseConnection
 from cactus_juice.satec.client import ClientState, close, run_polls
 from cactus_juice.settings import CactusJuiceSettings
 
 logger = logging.getLogger(__name__)
+
+# Matches this task's key in cactus_juice.tasks.TASKS - used as the TaskHealth row's task_name.
+TASK_NAME = "satecclient"
 
 # SIGINT is ctrl-c, SIGTERM is what docker/k8s/most process supervisors send to ask a process to shut down
 # cleanly before force-killing it - both should cause the task loop to exit gracefully rather than SIGTERM
@@ -32,6 +36,21 @@ def _install_shutdown_handlers(loop: asyncio.AbstractEventLoop) -> tuple[asyncio
     return stop_event, registered
 
 
+async def _record_health(db: DatabaseConnection, exception: BaseException | None) -> None:
+    """Upserts this task's TaskHealth row to reflect a tick just having run (and, if exception is given, that
+    it failed) - failures here are logged and swallowed so a health-tracking hiccup never masks the tick's own
+    error handling."""
+
+    try:
+        async with db.session_maker() as session:
+            await upsert_task_health(
+                session, TASK_NAME, datetime.now(UTC), str(exception) if exception is not None else None
+            )
+            await session.commit()
+    except Exception:
+        logger.exception(f"Failed to record task health for '{TASK_NAME}'.")
+
+
 async def run_satec_client_task(settings: CactusJuiceSettings) -> None:
     """Continuously polls every registered SatecConfig meter, writing samples into SatecReading.
 
@@ -54,8 +73,11 @@ async def run_satec_client_task(settings: CactusJuiceSettings) -> None:
             try:
                 if datetime.now(UTC) >= next_poll_at:
                     next_poll_at = await run_polls(state)
-            except Exception:
+            except Exception as exc:
                 logger.exception("Unhandled exception in SATEC client task - will retry shortly.")
+                await _record_health(db, exc)
+            else:
+                await _record_health(db, None)
 
             # Sleep until the next poll is due, but wake immediately (rather than up to that long late) if a
             # shutdown has been requested in the meantime.

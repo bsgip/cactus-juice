@@ -332,6 +332,23 @@ class TrocaConfig(Base):
     )  # How often EVSE nameplate ratings should be polled
 
 
+class TaskHealth(Base):
+    """Tracks the liveness of a single background task (see cactus_juice.tasks) - each task upserts its own row
+    (keyed by task_name) every time it runs, recording when it last ran and, separately, when/what it last
+    failed with. last_exception_at/last_exception are only touched on a failing run - a subsequent successful
+    run leaves them in place as a record of the task's last failure rather than clearing them, so a caller can
+    tell "actively failing" (last_exception_at == last_run_at) apart from "recovered from a past failure"
+    (last_exception_at < last_run_at)."""
+
+    __tablename__ = "task_health"
+
+    task_name: Mapped[str] = mapped_column(String, primary_key=True)
+
+    last_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_exception_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_exception: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
 class SatecConfig(Base):
     """Represents the connection details for polling a single SATEC meter over Modbus - unlike CSIPAusConfig/
     TrocaConfig there is no rolling history, multiple rows may be live at once (one per meter being polled) and
