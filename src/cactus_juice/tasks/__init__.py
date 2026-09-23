@@ -9,6 +9,7 @@ from typing import Any
 from cactus_juice.settings import CactusJuiceSettings
 from cactus_juice.tasks.csipausclient import run_csipaus_client_task
 from cactus_juice.tasks.satecclient import run_satec_client_task
+from cactus_juice.tasks.trocaclient import run_troca_client_task
 
 TaskFn = Callable[[CactusJuiceSettings], Coroutine[Any, Any, None]]
 
@@ -16,4 +17,5 @@ TaskFn = Callable[[CactusJuiceSettings], Coroutine[Any, Any, None]]
 TASKS: dict[str, TaskFn] = {
     "csipausclient": run_csipaus_client_task,
     "satecclient": run_satec_client_task,
+    "trocaclient": run_troca_client_task,
 }
