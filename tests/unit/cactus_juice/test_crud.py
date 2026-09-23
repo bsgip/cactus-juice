@@ -9,6 +9,7 @@ from assertical.fake.generator import clone_class_instance, generate_class_insta
 from assertical.fixtures.postgres import generate_async_session
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from cactus_juice.crud import (
     CSIPAUS_CONFIG_VALUE_COLUMNS,
@@ -32,6 +33,7 @@ from cactus_juice.crud import (
     fetch_ocpp_readings_in_range,
     fetch_satec_config,
     fetch_satec_configs,
+    fetch_satec_readings_in_range,
     fetch_troca_config,
     fetch_unsent_control_responses,
     fetch_unsent_dynamic_price_responses,
@@ -1978,6 +1980,117 @@ async def test_insert_satec_readings_no_commit(pg_base_config):
         assert (count_before + 1) == (
             await session.execute(select(func.count()).select_from(SatecReading))
         ).scalar_one()
+
+
+async def _seed_satec_readings(session: AsyncSession) -> None:
+    """Seeds satec_reading rows spanning SatecConfig ids 1 and 2 (see base_config.sql), deliberately laid out
+    to mirror base_config.sql's ocpp_reading fixture - ids are assigned 1-6 in this insertion order.
+
+    id  config  reading_start
+     1    1        00:10
+     2    1        00:00
+     3    2        00:20
+     4    1        00:05
+     5    2        00:15
+     6    1        00:10   (ties with id 1 -> id ASC tie-break)
+    """
+    readings = [
+        generate_class_instance(
+            SatecReading, seed=1, satec_config_id=1, reading_start=datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC)
+        ),
+        generate_class_instance(
+            SatecReading, seed=2, satec_config_id=1, reading_start=datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+        ),
+        generate_class_instance(
+            SatecReading, seed=3, satec_config_id=2, reading_start=datetime(2026, 1, 1, 0, 20, 0, tzinfo=UTC)
+        ),
+        generate_class_instance(
+            SatecReading, seed=4, satec_config_id=1, reading_start=datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC)
+        ),
+        generate_class_instance(
+            SatecReading, seed=5, satec_config_id=2, reading_start=datetime(2026, 1, 1, 0, 15, 0, tzinfo=UTC)
+        ),
+        generate_class_instance(
+            SatecReading, seed=6, satec_config_id=1, reading_start=datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC)
+        ),
+    ]
+    await insert_satec_readings(session, readings)
+
+
+@pytest.mark.parametrize(
+    "readings_from, readings_to, start, limit, expected_ids",
+    [
+        # Whole history - ordered by reading_start ASC then id ASC (see _seed_satec_readings)
+        (datetime.min, DEFAULT_MAX_DATE, 0, 99, [2, 4, 1, 6, 5, 3]),
+        (datetime(2026, 1, 1, tzinfo=UTC), DEFAULT_MAX_DATE, 0, 99, [2, 4, 1, 6, 5, 3]),
+        # readings_from is inclusive, readings_to is exclusive
+        (datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC), datetime(2026, 1, 1, 0, 15, 0, tzinfo=UTC), 0, 99, [4, 1, 6]),
+        (datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC), datetime(2026, 1, 1, 0, 20, 0, tzinfo=UTC), 0, 99, [2, 4, 1, 6, 5]),
+        # ids 1 & 6 share reading_start 00:10 -> id ASC tie-break
+        (datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC), datetime(2026, 1, 1, 0, 10, 1, tzinfo=UTC), 0, 99, [1, 6]),
+        # empty window (from == to)
+        (datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC), datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC), 0, 99, []),
+        # nothing in range
+        (datetime(2026, 1, 1, 1, 0, 0, tzinfo=UTC), DEFAULT_MAX_DATE, 0, 99, []),
+        # Paging over the full history
+        (datetime.min, DEFAULT_MAX_DATE, 1, 2, [4, 1]),
+        (datetime.min, DEFAULT_MAX_DATE, 2, 2, [1, 6]),
+        (datetime.min, DEFAULT_MAX_DATE, 4, 99, [5, 3]),
+    ],
+)
+async def test_fetch_satec_readings_in_range(
+    pg_base_config,
+    readings_from: datetime,
+    readings_to: datetime,
+    start: int,
+    limit: int,
+    expected_ids: list[int],
+):
+    async with generate_async_session(pg_base_config) as session:
+        await _seed_satec_readings(session)
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        actual = await fetch_satec_readings_in_range(
+            session, readings_from=readings_from, readings_to=readings_to, start=start, limit=limit
+        )
+        assert [e.satec_reading_id for e in actual] == expected_ids
+        assert_list_type(SatecReading, actual, count=len(expected_ids))
+
+
+async def test_fetch_satec_readings_in_range_values(pg_base_config):
+    """The mapped columns round-trip from what was inserted - including satec_config_id, so results can be
+    grouped back to the meter (SatecConfig) that produced them."""
+    readings = [
+        generate_class_instance(
+            SatecReading, seed=1, satec_config_id=1, reading_start=datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+        ),
+        generate_class_instance(
+            SatecReading, seed=2, satec_config_id=2, reading_start=datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+        ),
+    ]
+    async with generate_async_session(pg_base_config) as session:
+        await insert_satec_readings(session, readings)
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        actual = await fetch_satec_readings_in_range(
+            session,
+            readings_from=datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC),
+            readings_to=datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC),
+        )
+
+    assert_list_type(SatecReading, actual, count=2)
+    for expected, actual_row in zip(readings, actual, strict=True):
+        assert_nowish(actual_row.created_at)
+        for col in SATEC_READING_VALUE_COLUMNS:
+            assert getattr(actual_row, col) == getattr(expected, col)
+
+
+async def test_fetch_satec_readings_in_range_empty_db(pg_empty_config):
+    async with generate_async_session(pg_empty_config) as session:
+        actual = await fetch_satec_readings_in_range(session, readings_from=datetime.min, readings_to=DEFAULT_MAX_DATE)
+    assert actual == []
 
 
 async def test_csipaus_default_rejects_overlapping_active_range(pg_base_config):

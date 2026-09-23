@@ -2,12 +2,11 @@ import { AppShell, Group, NavLink, Text, Title } from '@mantine/core'
 import { IconApi, IconChartLine, IconGauge, IconPlugConnected, IconSettings } from '@tabler/icons-react'
 import { Link, Outlet, useLocation } from 'react-router-dom'
 
-/** Left-hand navigation entries. Telemetry/charting pages will slot in here as they're built. */
 const NAV_ITEMS = [
   { to: '/config', label: 'CSIP-Aus Config', icon: IconSettings },
   { to: '/troca-config', label: 'Troca Config', icon: IconApi },
   { to: '/satec-config', label: 'Satec Config', icon: IconGauge },
-  { to: '/telemetry', label: 'Telemetry', icon: IconChartLine, disabled: true },
+  { to: '/telemetry', label: 'Telemetry', icon: IconChartLine },
 ]
 
 export function AppLayout() {
@@ -33,8 +32,6 @@ export function AppLayout() {
             label={item.label}
             leftSection={<item.icon size={18} stroke={1.5} />}
             active={location.pathname.startsWith(item.to)}
-            disabled={item.disabled}
-            description={item.disabled ? 'Coming soon' : undefined}
           />
         ))}
       </AppShell.Navbar>

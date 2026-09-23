@@ -690,3 +690,26 @@ async def insert_satec_readings(session: AsyncSession, readings: list[SatecReadi
 
     values = [{col: getattr(r, col) for col in SATEC_READING_VALUE_COLUMNS} for r in readings]
     await session.execute(insert(SatecReading).values(values))
+
+
+async def fetch_satec_readings_in_range(
+    session: AsyncSession, readings_from: datetime, readings_to: datetime, start: int = 0, limit: int = 500
+) -> Sequence[SatecReading]:
+    """Fetches all SatecReadings that exist in [readings_from, readings_to) (inclusive to exclusive), across
+    every SatecConfig (there's no per-meter filtering here - group the results by satec_config_id if needed).
+
+    Readings will be ordered by reading_start ASC, id ASC"""
+
+    return (
+        (
+            await session.execute(
+                select(SatecReading)
+                .where((SatecReading.reading_start >= readings_from) & (SatecReading.reading_start < readings_to))
+                .order_by(SatecReading.reading_start, SatecReading.satec_reading_id)
+                .offset(start)
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
