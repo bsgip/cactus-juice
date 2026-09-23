@@ -116,7 +116,13 @@ async def run_csipaus_client_task(settings: CactusJuiceSettings) -> None:
                     next_poll_at = datetime.now(UTC)  # Force an immediate poll against the new state
 
                 if state is not None:
-                    await run_responses(state)
+                    try:
+                        await run_responses(state)
+                    except Exception as exc:
+                        logger.exception(
+                            "Unhandled exception in CSIP-Aus client task during response - will retry at next poll.",
+                            exc_info=exc,
+                        )
 
                     if datetime.now(UTC) >= next_poll_at:
                         next_poll_at = await run_polls(state)

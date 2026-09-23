@@ -62,7 +62,8 @@ from cactus_juice.csipaus.mapping import (
 )
 from cactus_juice.csipaus.server import get_resource, paginate_list_resource_items, submit_resource
 from cactus_juice.db import DatabaseConnection
-from cactus_juice.model import CSIPAusControl, CSIPAusDynamicPrice
+from cactus_juice.error import RequestError
+from cactus_juice.model import CSIPAusControl, CSIPAusControlResponse, CSIPAusDynamicPrice, CSIPAusDynamicPriceResponse
 
 logger = logging.getLogger(__name__)
 
@@ -716,9 +717,37 @@ async def poll_tariff_list(state: ClientState, session: AsyncSession, now: datet
     state.tpl.last_poll = now
 
 
+async def _safely_submit_response(
+    state: ClientState,
+    response: CSIPAusControlResponse | CSIPAusDynamicPriceResponse,
+    now: datetime,
+    subject_mrid: str,
+    reply_to: str,
+) -> RequestError | None:
+    body = csipaus_response_to_response(response, subject_mrid=subject_mrid)
+    try:
+        await submit_resource(state.context.http, HTTPMethod.POST, reply_to, body, no_location_header=True)
+        response.sent_at = now
+        return None
+    except RequestError as exc:
+        code = exc.status_code if exc.status_code is not None else "???"
+        logger.error(
+            f"HTTP error {code} sending response status {response.response_status} for {subject_mrid} to {reply_to}",
+            exc_info=exc,
+        )
+
+        # If we have a client error - just mark it as sent
+        if exc.status_code is not None and exc.status_code < 500:
+            response.sent_at = now
+        return exc
+
+
 async def post_unsent_responses(state: ClientState, session: AsyncSession, now: datetime) -> None:
     """Selects all unsent Responses that are due to send - sends them and then marks the records as sent. This isn't
     required to be done on a regular schedule. Will do nothing if there are no unsent responses."""
+
+    all_errors: list[Exception] = []
+    total_attempts = 0
 
     # Control responses
     control_responses = await fetch_unsent_control_responses(session, now, include_control=True)
@@ -726,11 +755,16 @@ async def post_unsent_responses(state: ClientState, session: AsyncSession, now: 
         logger.info(f"Found {len(control_responses)} unsent DERControl Responses to send")
         for ctrl_response in control_responses:
             if ctrl_response.control.reply_to:
-                body = csipaus_response_to_response(ctrl_response, subject_mrid=ctrl_response.control.mrid)
-                await submit_resource(
-                    state.context.http, HTTPMethod.POST, ctrl_response.control.reply_to, body, no_location_header=True
+                total_attempts += 1
+                error = await _safely_submit_response(
+                    state,
+                    ctrl_response,
+                    now,
+                    subject_mrid=ctrl_response.control.mrid,
+                    reply_to=ctrl_response.control.reply_to,
                 )
-                ctrl_response.sent_at = now
+                if error is not None:
+                    all_errors.append(error)
 
     # Price responses
     price_responses = await fetch_unsent_dynamic_price_responses(session, now, include_dynamic_price=True)
@@ -738,17 +772,21 @@ async def post_unsent_responses(state: ClientState, session: AsyncSession, now: 
         logger.info(f"Found {len(price_responses)} unsent TimeTariffInterval Responses to send")
         for price_response in price_responses:
             if price_response.dynamic_price.reply_to:
-                body = csipaus_response_to_response(price_response, subject_mrid=price_response.dynamic_price.mrid)
-                await submit_resource(
-                    state.context.http,
-                    HTTPMethod.POST,
-                    price_response.dynamic_price.reply_to,
-                    body,
-                    no_location_header=True,
+                total_attempts += 1
+                error = await _safely_submit_response(
+                    state,
+                    price_response,
+                    now,
+                    subject_mrid=price_response.dynamic_price.mrid,
+                    reply_to=price_response.dynamic_price.reply_to,
                 )
-                price_response.sent_at = now
+                if error is not None:
+                    all_errors.append(error)
 
     await session.flush()
+
+    if all_errors:
+        logger.error(f"Sending Responses: {len(all_errors)} of {total_attempts} attempts failed")
 
 
 def poll_required(pollable: Pollable | None, now: datetime) -> bool:

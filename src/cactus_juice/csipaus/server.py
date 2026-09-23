@@ -140,7 +140,10 @@ async def get_resource[T: Resource](t: type[T], context: HttpContext, href: str)
     response = await make_request(context, href, HTTPMethod.GET)
 
     if not response.is_success():
-        raise RequestError(f"Received status {response.status} requesting {response.method} {href}. {response.body}")
+        raise RequestError(
+            f"Received status {response.status} requesting {response.method} {href}. {response.body}",
+            status_code=response.status,
+        )
 
     return parse_type_response(t, response)
 
@@ -166,7 +169,9 @@ async def submit_resource[T: Resource](
         sep2_xml_body=resource_to_sep2_xml(submitted_resource),
     )
     if not response.is_success():
-        raise RequestError(f"Received status {response.status} requesting {response.method} {href}.")
+        raise RequestError(
+            f"Received status {response.status} requesting {response.method} {href}.", status_code=response.status
+        )
 
     if no_location_header:
         return href
