@@ -1,9 +1,9 @@
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from http import HTTPMethod
-from typing import cast
+from typing import cast, overload
 
 from cactus_test_definitions.csipaus import CSIPAusReadingLocation
 from envoy_schema.server.schema.csip_aus.connection_point import ConnectionPointRequest
@@ -72,8 +72,17 @@ DEFAULT_POLL_RATE = timedelta(minutes=15)
 DEFAULT_POST_RATE_SECONDS = 900  # 15 minutes
 
 
+def _href_to_label(href: str) -> str:
+    href_parts = href.split("/")
+    if href_parts:
+        return href_parts[-1]
+    else:
+        return href
+
+
 @dataclass(slots=True)
 class Pollable:
+    label: str  # Human readable label for logging
     last_poll: datetime
     poll_rate: timedelta
 
@@ -86,8 +95,14 @@ class PollableResource(Pollable):
     href: str
 
     @staticmethod
-    def new_instance(href: str) -> "PollableResource":
-        return PollableResource(MIN_DATE, DEFAULT_POLL_RATE, MIN_DATE, DEFAULT_POLL_RATE, href=href)
+    @overload
+    def new_instance(href: str) -> "PollableResource": ...
+    @staticmethod
+    @overload
+    def new_instance(href: str, poll_rate: timedelta) -> "PollableResource": ...
+    @staticmethod
+    def new_instance(href: str, poll_rate: timedelta = DEFAULT_POLL_RATE) -> "PollableResource":
+        return PollableResource(_href_to_label(href), MIN_DATE, poll_rate, MIN_DATE, DEFAULT_POLL_RATE, href=href)
 
 
 @dataclass(slots=True)
@@ -96,7 +111,11 @@ class PollableResources(Pollable):
 
     @staticmethod
     def new_instance(hrefs: list[str]) -> "PollableResources":
-        return PollableResources(MIN_DATE, DEFAULT_POLL_RATE, MIN_DATE, DEFAULT_POLL_RATE, hrefs=hrefs)
+        if hrefs:
+            label = _href_to_label(hrefs[0])
+        else:
+            label = "???"
+        return PollableResources(label, MIN_DATE, DEFAULT_POLL_RATE, MIN_DATE, DEFAULT_POLL_RATE, hrefs=hrefs)
 
 
 @dataclass(slots=True)
@@ -129,6 +148,16 @@ class ClientState:
 
     tpl: PollableResources | None  # We may have multiple lists via FSAs
 
+    def all_pollables(self) -> Generator[PollableResource | PollableResources | None]:
+        yield self.dcap
+        yield self.edevl
+        yield self.mupl
+        yield self.mupl
+        yield self.fsal
+        yield self.derl
+        yield self.derpl
+        yield self.tpl
+
     def next_poll_post(self) -> datetime:
         """Calculates the next moment a poll/post should occur."""
 
@@ -138,16 +167,7 @@ class ClientState:
         def _candidate_post(p: Pollable | None) -> datetime | None:
             return None if p is None else p.last_post + p.post_rate
 
-        candidate_times = [
-            _candidate_poll(self.dcap),
-            _candidate_poll(self.edevl),
-            _candidate_poll(self.mupl),
-            _candidate_post(self.mupl),
-            _candidate_poll(self.fsal),
-            _candidate_poll(self.derl),
-            _candidate_poll(self.derpl),
-            _candidate_poll(self.tpl),
-        ]
+        candidate_times = (_candidate_poll(p) for p in self.all_pollables())
 
         # The default should never occur as dcap is mandatory - but just in case
         return min((ct for ct in candidate_times if ct is not None), default=datetime.now(UTC))
@@ -195,13 +215,7 @@ def upsert_href(existing: PollableResource | None, link: Link | None) -> Pollabl
 
     # If there is nothing there or a change in resource - create a new instance
     if existing is None or existing.href != link.href:
-        return PollableResource(
-            MIN_DATE,
-            DEFAULT_POLL_RATE,
-            MIN_DATE,
-            DEFAULT_POLL_RATE,
-            link.href,
-        )
+        return PollableResource.new_instance(link.href)
 
     # Otherwise no change
     return existing
@@ -218,13 +232,7 @@ def upsert_hrefs(existing: PollableResources | None, links: Iterable[Link | None
 
     # If there is nothing there or a change in resource - create a new instance
     if existing is None or existing.hrefs != hrefs:
-        return PollableResources(
-            MIN_DATE,
-            DEFAULT_POLL_RATE,
-            MIN_DATE,
-            DEFAULT_POLL_RATE,
-            hrefs,
-        )
+        return PollableResources.new_instance(hrefs)
 
     # Otherwise no change
     return existing
@@ -249,13 +257,7 @@ def upsert_poll_rate(
     poll_rate = calculate_poll_rate((poll_rate_seconds,), *parents)
     # If there is nothing there or a change in resource - create a new instance
     if existing is None or existing.href != href:
-        return PollableResource(
-            MIN_DATE,
-            poll_rate,
-            MIN_DATE,
-            DEFAULT_POLL_RATE,
-            href,
-        )
+        return PollableResource.new_instance(href, poll_rate)
 
     # Otherwise update in place
     existing.poll_rate = poll_rate
@@ -852,5 +854,10 @@ async def run_polls(state: ClientState, min_wait: timedelta = timedelta(seconds=
             await poll_tariff_list(state, session, now)
             await session.commit()
 
-    # Figure out our next call to this function
-    return max(state.next_poll_post(), datetime.now(UTC) + min_wait)
+    # Figure out our next call to this function - log it for brevity
+    relative_now = datetime.now(UTC)
+    next_wake = max(state.next_poll_post(), relative_now + min_wait)
+    poll_rates = ", ".join(f"{p.label} {p.poll_rate.total_seconds()}s" for p in state.all_pollables() if p is not None)
+    logger.info(f"next poll in ~{(next_wake - relative_now).total_seconds()}s Poll rates: {poll_rates}")
+
+    return next_wake
