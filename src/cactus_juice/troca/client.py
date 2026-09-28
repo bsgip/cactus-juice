@@ -1,22 +1,31 @@
 from __future__ import annotations
 
+import json
 import types
 from typing import Any, Self
 
 import aiohttp
 
 from .models import (
-    ChargingProfile,
-    CommandStatus,
+    ActivePowerSchedule,
+    CommandParameter,
     Connector,
     Evse,
+    GetVariableData,
+    GetVariableResult,
+    LocationId,
     MeteringReading,
     Pool,
     SessionCommand,
-    SessionCommandRequest,
+    SessionCommandLocation,
+    SessionCommandStatusEntry,
     SessionCommandType,
     SessionData,
+    SessionOperationalData,
+    SessionStatusEntry,
     Station,
+    StructurePair,
+    set_charging_profile_parameters,
 )
 
 
@@ -86,12 +95,18 @@ class TrocaClient:
                 raise TrocaApiError(resp.status, "GET", path, body)
             return await resp.json(content_type=None) if body else None
 
-    async def _post(self, path: str, payload: list[dict[str, Any]]) -> None:
+    async def _post(self, path: str, payload: list[dict[str, Any]] | dict[str, Any]) -> Any:  # noqa: ANN401
+        """POSTs payload as JSON - returns the parsed JSON response body (or None if it's empty / not JSON, eg
+        Troca's plain text "Success")."""
         session = self._ensure_session()
         async with session.post(f"{self._base_url}{path}", json=payload) as resp:
             body = await resp.text()
             if resp.status >= 400:
                 raise TrocaApiError(resp.status, "POST", path, body)
+            try:
+                return json.loads(body) if body else None
+            except ValueError:
+                return None
 
     # -- Config -----------------------------------------------
 
@@ -99,7 +114,7 @@ class TrocaClient:
         data = await self._get("/config/connectors", self._params(limit, skip))
         return [Connector.from_dict(item) for item in data or []]
 
-    # -- Device metadata -----------------------------------------------
+    # -- Structure -------------------------------------------------------
 
     async def get_pools(self, *, limit: int | None = None, skip: int | None = None) -> list[Pool]:
         data = await self._get("/structure/pools", self._params(limit, skip))
@@ -110,24 +125,32 @@ class TrocaClient:
         return [Station.from_dict(item) for item in data or []]
 
     async def get_evses(self, *, limit: int | None = None, skip: int | None = None) -> list[Evse]:
-        """Metadata about connected charge points (vendor/model/capability
-        flags). Does not include electrical ratings -- see ``models.Evse``.
-        """
+        """EVSE identities only - electrical ratings have to be fetched from the station via get_variables."""
         data = await self._get("/structure/evses", self._params(limit, skip))
         return [Evse.from_dict(item) for item in data or []]
 
-    # -- Sessions (incl. connected-EV charge/discharge-rate metadata) ---
+    async def get_structure_pairs(self, *, limit: int | None = None, skip: int | None = None) -> list[StructurePair]:
+        data = await self._get("/structure/pairs", self._params(limit, skip))
+        return [StructurePair.from_dict(item) for item in data or []]
+
+    # -- Sessions ----------------------------------------------------------
 
     async def get_sessions(self, *, limit: int | None = None, skip: int | None = None) -> list[SessionData]:
-        """Active/past charging sessions. ``SessionData.constraints`` is
-
-        where the connected EV's own max/min charge and discharge rate,
-        battery capacity, and V2G support are reported -- there is no
-        equivalent static, pre-session EVSE capability endpoint (see
-        ``get_evses``).
-        """
         data = await self._get("/sessions", self._params(limit, skip))
         return [SessionData.from_dict(item) for item in data or []]
+
+    async def get_session_statuses(
+        self, *, limit: int | None = None, skip: int | None = None
+    ) -> list[SessionStatusEntry]:
+        """The full status history of every session (see SessionStatusEntry)."""
+        data = await self._get("/sessions/status", self._params(limit, skip))
+        return [SessionStatusEntry.from_dict(item) for item in data or []]
+
+    async def get_session_operational_data(
+        self, *, limit: int | None = None, skip: int | None = None
+    ) -> list[SessionOperationalData]:
+        data = await self._get("/sessions/operational-data", self._params(limit, skip))
+        return [SessionOperationalData.from_dict(item) for item in data or []]
 
     # -- Power usage readings -------------------------------------------
 
@@ -135,67 +158,67 @@ class TrocaClient:
         data = await self._get("/observation-points/metering-data", self._params(limit, skip))
         return [MeteringReading.from_dict(item) for item in data or []]
 
-    # -- Charging schedule read/write ------------------------------------
+    # -- Session commands (charging schedule read/write) --------------------
 
     async def get_session_commands(self, *, limit: int | None = None, skip: int | None = None) -> list[SessionCommand]:
-        """All recorded session commands, including past
-        ``set_charging_profile`` / ``clear_charging_profile`` commands and
-        their ``status``. A polling service enforcing a schedule should use
-        this to confirm the last profile it pushed was ``accepted``.
-        """
+        """Every recorded session command - both ours and Troca's own internal ones (see SessionCommand)."""
         data = await self._get("/sessions/commands", self._params(limit, skip))
         return [SessionCommand.from_dict(item) for item in data or []]
 
-    async def get_command_statuses(self, *, limit: int | None = None, skip: int | None = None) -> list[CommandStatus]:
-        """Raw ``/sessions/commands/status``. Per the spec this returns a
-        bare list of status enum values with no command id attached, so it
-        can't tell you *which* command a status belongs to -- prefer
-        ``get_session_commands`` and read ``.status`` off the record you
-        care about.
-        """
+    async def get_session_command_statuses(
+        self, *, limit: int | None = None, skip: int | None = None
+    ) -> list[SessionCommandStatusEntry]:
         data = await self._get("/sessions/commands/status", self._params(limit, skip))
-        return [CommandStatus(item) for item in data or []]
+        return [SessionCommandStatusEntry.from_dict(item) for item in data or []]
 
-    async def send_session_command(self, command: SessionCommandRequest) -> None:
-        """Low-level escape hatch for any ``SessionCommandType``."""
-        await self._post("/sessions/commands", [command.to_dict()])
+    async def get_session_command_locations(
+        self, *, limit: int | None = None, skip: int | None = None
+    ) -> list[SessionCommandLocation]:
+        data = await self._get("/sessions/commands/locations", self._params(limit, skip))
+        return [SessionCommandLocation.from_dict(item) for item in data or []]
 
-    async def set_charging_profile(
-        self,
-        *,
-        command_id: str,
-        profile: ChargingProfile,
-        pool_id: str | None = None,
-        station_id: str | None = None,
-        evse_id: int | None = None,
+    async def send_session_commands(self, commands: list[SessionCommand]) -> None:
+        await self._post("/sessions/commands", [c.to_dict() for c in commands])
+
+    async def set_session_command_locations(self, locations: list[SessionCommandLocation]) -> None:
+        """Setting a command's location is what triggers Troca to validate and dispatch it to the station."""
+        await self._post("/sessions/commands/locations", [loc.to_dict() for loc in locations])
+
+    async def set_active_power_schedule(
+        self, *, command_id: str, timestamp: str, schedule: ActivePowerSchedule, evse_location: LocationId
     ) -> None:
-        """Push a time-bounded power limit onto a session's EVSE."""
-        command = SessionCommandRequest(
-            id=command_id,
+        """Replaces the charging schedule for whatever session is active on the specified EVSE. This is fire and
+        forget - the outcome is later reported via get_session_command_statuses (against command_id)."""
+        command = SessionCommand(
+            command_id=command_id,
             type=SessionCommandType.SET_CHARGING_PROFILE,
-            pool_id=pool_id,
-            station_id=station_id,
-            evse_id=evse_id,
-            input_parameters=profile.to_dict(),
+            input_parameters=CommandParameter(
+                timestamp=timestamp, parameters=set_charging_profile_parameters(schedule)
+            ),
         )
-        await self.send_session_command(command)
+        await self.send_session_commands([command])
+        await self.set_session_command_locations([SessionCommandLocation(command_id, evse_location)])
 
-    async def clear_charging_profile(
-        self,
-        *,
-        command_id: str,
-        pool_id: str | None = None,
-        station_id: str | None = None,
-        evse_id: int | None = None,
-        charging_profile_id: int | None = None,
-    ) -> None:
-        """Remove a previously-set charging profile."""
-        command = SessionCommandRequest(
-            id=command_id,
-            type=SessionCommandType.CLEAR_CHARGING_PROFILE,
-            pool_id=pool_id,
-            station_id=station_id,
-            evse_id=evse_id,
-            input_parameters=({"chargingProfileId": charging_profile_id} if charging_profile_id is not None else None),
+    # -- OCPP passthrough ----------------------------------------------------
+
+    async def send_ocpp_command(
+        self, *, connector_name: str, ocpp_version: str, message_type: str, station_name: str, payload: dict[str, Any]
+    ) -> Any:  # noqa: ANN401
+        """Sends an arbitrary OCPP request (payload) directly to a charging station via one of Troca's OCPP
+        connectors, returning the station's raw OCPP response payload. The request must be wrapped in a "payload"
+        key or Troca rejects it with "No input for request" - this isn't in the spec."""
+        path = f"/{connector_name}/ocpp/{ocpp_version}/command/{message_type}/{station_name}"
+        return await self._post(path, {"payload": payload})
+
+    async def get_variables(
+        self, *, connector_name: str, ocpp_version: str, station_name: str, requests: list[GetVariableData]
+    ) -> list[GetVariableResult]:
+        """OCPP 2.x GetVariables via the passthrough."""
+        response = await self.send_ocpp_command(
+            connector_name=connector_name,
+            ocpp_version=ocpp_version,
+            message_type="GetVariables",
+            station_name=station_name,
+            payload={"getVariableData": [r.to_dict() for r in requests]},
         )
-        await self.send_session_command(command)
+        return [GetVariableResult.from_dict(r) for r in (response or {}).get("getVariableResult", [])]

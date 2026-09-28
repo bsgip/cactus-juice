@@ -1,0 +1,5622 @@
+openapi: "3.0.3"
+info:
+  description: "Troca API Description"
+  version: "1.0.0"
+  title: "Troca"
+  contact:
+    name : "Hadrien Lafforgue"
+    email: "hadrien.lafforgue@trialog.com"
+
+tags:
+- name: "Log"
+  description: "Server log file access"
+- name: "Configuration"
+  description: "Connector configuration and location association"
+- name: "Structure"
+  description: "Data related to charging infrastructure"
+- name: "Session"
+  description: "Data related to charging sessions"
+- name: "Grid"
+  description: "Data related to grid connections and observation points"
+- name: "ESS"
+  description: "Data related to storage systems as energy sources"
+- name: "Prosumer"
+  description: "Data related to prosumer (renewable energy production) sites"
+
+
+paths:
+  /log:
+    get:
+      tags:
+      - "Log"
+      summary: "Get Troca logs"
+      description: "Get Troca logs"
+      operationId: "getTEmsLog"
+      responses:
+        "200":
+          description: "Success"
+          content :
+            "application/json":
+              schema:
+                type : string
+        "401":
+          description: "Unauthorized access"
+          content :
+            "text/plain":
+              schema:
+                type: "string"
+        "403":
+          description: "Forbidden"
+          content :
+            "text/plain":
+              schema:
+                type: "string"
+        "404":
+          description: "Not found"  
+          content:
+            "text/plain":
+              schema:
+                type : "string"
+        "500":
+          description: "Internal server error"
+          content :
+            "text/plain":
+              schema:
+                type: "string"
+  /config/connectors:
+    get:
+      tags:
+        - "Configuration"
+      summary: "GET connector data list"
+      description: "GET connector data list."
+      operationId: "getConnectorDataList"
+      parameters:
+        - name: "connector.connectorId"
+          in: query
+          description: "Troca connector ID"
+          required: false
+          explode : false
+          schema:
+            type: "array"
+            items:
+              type: "string"
+        - name: "connector.name"
+          in: "query"
+          description: "Connector name"
+          required: false
+          explode : false
+          schema:
+            type: "array"
+            items:
+              type : "string"
+        - name : connector.type
+          in : query
+          description : "Connector type"
+          required : false
+          explode : false
+          schema:
+            type : "array"
+            items:
+                $ref: '#/components/schemas/ConnectorType'
+        - name : connector.enablingModules
+          in : query
+          description : "Module enabled by the connector"
+          required : false
+          explode : false
+          schema:
+            type : "array"
+            items:
+                $ref: "#/components/schemas/ModuleType"
+        - name : connector.listeningModules 
+          in : query
+          description : "Module used by the connector"
+          required : false
+          explode : false
+          schema:
+            type : "array"
+            items:
+                $ref: "#/components/schemas/ModuleType"
+        - name : location.locationId 
+          in : query
+          description : "Id of the structure location"
+          required : false
+          explode : false
+          schema:
+            type : "array"
+            items:
+                type : "string"
+        - name : location.level 
+          in : query
+          description : "Targeted structure level"
+          required : false
+          explode : false
+          schema:
+            type : "array"
+            items:
+                $ref: '#/components/schemas/StructureLevel'
+        - name : limit 
+          in : query
+          description : "Limit for retrieved elements"
+          required : false
+          explode : false
+          schema:
+                type : "integer"
+        - name : skip 
+          in : query
+          description : "Number of returned elements to skip"
+          required : false
+          explode : false
+          schema:
+            type : "integer"
+      responses:
+        "200":
+          description: "Success"
+          content :
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/ConnectorData"
+        "401":
+          description: "Unauthorized access"
+          content :
+            "text/plain":
+              schema:
+                type: "string"
+        "403":
+          description: "Forbidden"
+          content :
+            "text/plain":
+              schema:
+                type: "string" 
+        "500":
+          description: "Internal server error"
+          content :
+            "text/plain":
+              schema:
+                type: "string"
+  /config/connectors/location:
+    get:
+      tags:
+        - "Configuration"
+      summary: "GET connector location configuration list"
+      description: "GET connector location configuration list."
+      operationId: "getConnectorLocation"
+      parameters:
+        - name: "connector.connectorId"
+          in: query
+          description: "Troca connector ID"
+          required: false
+          explode : false
+          schema:
+            type: "array"
+            items:
+              type: "string"
+        - name: "connector.name"
+          in: "query"
+          description: "Connector name"
+          required: false
+          explode : false
+          schema:
+            type: "array"
+            items:
+              type : "string"
+        - name : connector.type
+          in : query
+          description : "Connector type"
+          required : false
+          explode : false
+          schema:
+            type : "array"
+            items:
+                $ref: '#/components/schemas/ConnectorType'
+        - name : connector.enablingModules
+          in : query
+          description : "Module enabled by the connector"
+          required : false
+          explode : false
+          schema:
+            type : "array"
+            items:
+                $ref: "#/components/schemas/ModuleType"
+        - name : connector.listeningModules 
+          in : query
+          description : "Module used by the connector"
+          required : false
+          explode : false
+          schema:
+            type : "array"
+            items:
+                $ref: "#/components/schemas/ModuleType"
+        - name : location.locationId 
+          in : query
+          description : "Id of the structure location"
+          required : false
+          explode : false
+          schema:
+            type : "array"
+            items:
+                type : "string"
+        - name : location.level 
+          in : query
+          description : "Targeted structure level"
+          required : false
+          explode : false
+          schema:
+            type : "array"
+            items:
+                $ref: '#/components/schemas/StructureLevel'
+        - name : limit 
+          in : query
+          description : "Limit for retrieved elements"
+          required : false
+          explode : false
+          schema:
+                type : "integer"
+        - name : skip 
+          in : query
+          description : "Number of returned elements to skip"
+          required : false
+          explode : false
+          schema:
+            type : "integer"
+      responses:
+        "200":
+          description: "Success"
+          content :
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/ConnectorLocation"
+        "401":
+          description: "Unauthorized access"
+          content :
+            "text/plain":
+              schema:
+                type: "string"
+        "403":
+          description: "Forbidden"
+          content :
+            "text/plain":
+              schema:
+                type: "string" 
+        "500":
+          description: "Internal server error"
+          content :
+            "text/plain":
+              schema:
+                type: "string"
+    post:
+      tags:
+      - "Configuration"
+      summary: "POST connector location configuration list"
+      description: "POST connector location configuration list. Only admin users with no location restrictions can do it."
+      operationId: "postConnectorLocation"
+      requestBody:
+        required : true
+        content: 
+         "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/ConnectorLocation"
+                
+      responses:
+        "200":
+          description: "Success"
+          content :
+            "text/plain":
+              schema:
+                type: "string"
+        "400":
+          description: "Bad request"
+          content :
+            "text/plain":
+              schema:
+                type: "string"
+        "401":
+          description: "Unauthorized access"
+          content :
+            "text/plain":
+              schema:
+                type: "string"
+        "403":
+          description: "Forbidden"
+          content :
+            "text/plain":
+              schema:
+                type: "string"    
+        "500":
+          description: "Internal server error"
+          content :
+            "text/plain":
+              schema:
+                type: "string"
+    delete:
+      tags:
+      - "Configuration"
+      summary: "Delete connector location association"
+      description: ""
+      operationId: "deleteConnectorLocation"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/pools:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Pool Data"
+      operationId: "handleGetPoolData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/PoolData"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Pool Data"
+      operationId: "handleSetPoolData"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/PoolData"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Structure"
+      summary: "Delete Pool Data"
+      operationId: "handleDeletePoolData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/stations:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Charging Station Data"
+      operationId: "handleGetChargingStationData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/StationData"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Station Data"
+      operationId: "handleSetStationData"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/StationData"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Structure"
+      summary: "Delete Station Data"
+      operationId: "handleDeleteStationData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/evses:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get EVSE Data"
+      operationId: "handleGetEVSEData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EvseData"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Evse Data"
+      operationId: "handleSetEvseData"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EvseData"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Structure"
+      summary: "Delete Evse Data"
+      operationId: "handleDeleteEvseData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/evse-connectors:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get EVSE Connector Data"
+      operationId: "handleGetEVSEConnectorData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EVSEConnectorData"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Evse Connector Data"
+      operationId: "handleSetEvseConnectorData"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EVSEConnectorData"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Structure"
+      summary: "Delete Evse Connector Data"
+      operationId: "handleDeleteEvseConnectorData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/pairs:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Location Pairs"
+      operationId: "handleGetLocationPairs"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/LocationPairs"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Location Pairs"
+      operationId: "handleSetLocationPairs"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/LocationPairs"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/constraints:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Location Constraints"
+      operationId: "handleGetLocationConstraints"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/LocationConstraints"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Location Constraints"
+      operationId: "handleSetLocationConstraints"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/LocationConstraints"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/commands:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Structure Command Data"
+      operationId: "handleGetStructureCommandData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/StructureCommandData"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Structure Command Data"
+      operationId: "handleSetStructureCommandData"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/StructureCommandData"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/commands/status:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Structure Command Status"
+      operationId: "handleGetStructureCommandStatus"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/CommandStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Structure Command Status"
+      operationId: "handleSetStructureCommandStatus"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/CommandStatus"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/commands/locations:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Structure Command Locations"
+      operationId: "handleGetStructureCommandLocations"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/StructureCommandLocations"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Structure Command Locations"
+      operationId: "handleSetStructureCommandLocations"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/StructureCommandLocations"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/ems-mode-settings:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Ems Mode Settings"
+      operationId: "handleGetEmsModeSettings"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EmsModeSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Ems Mode Settings"
+      operationId: "handleSetEmsModeSettings"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EmsModeSettings"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/ev-user-auth-settings:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get EV User Auth Settings"
+      operationId: "handleGetEVUserAuthSettings"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EVUserAuthSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set EV User Auth Settings"
+      operationId: "handleSetEVUserAuthSettings"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EVUserAuthSettings"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/pools/connection-settings:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Pool Connection Settings"
+      operationId: "handleGetPoolConnectionSettings"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/PoolConnectionSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Pool Connection Settings"
+      operationId: "handleSetPoolConnectionSettings"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/PoolConnectionSettings"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/default-batteries:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Location Default Batteries"
+      operationId: "handleGetLocationDefaultBatteries"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/LocationDefaultBatteries"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Location Default Batteries"
+      operationId: "handleSetLocationDefaultBatteries"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/LocationDefaultBatteries"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/default-ev-user-preferences:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Ev User Preferences"
+      operationId: "handleGetEvUserPreferences"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EvUserPreferences"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Ev U Ser Preferences"
+      operationId: "handleSetEvUSerPreferences"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EvUserPreferences"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/default-ems-settings:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Default Ems Settings"
+      operationId: "handleGetDefaultEmsSettings"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/DefaultEmsSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Default Ems Settings"
+      operationId: "handleSetDefaultEmsSettings"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/DefaultEmsSettings"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/images:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Images"
+      operationId: "handleGetImages"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/ImageInfo"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Images"
+      operationId: "handleSetImages"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/ImageInfo"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/pools/legal-entities:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Pool Legal Entities"
+      operationId: "handleGetPoolLegalEntities"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/CompanyInfo"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Pool Legal Entities"
+      operationId: "handleSetPoolLegalEntities"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/CompanyInfo"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/pools/status:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Pool Status"
+      operationId: "handleGetPoolStatus"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/PoolStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Pool Status"
+      operationId: "handleSetPoolStatus"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/PoolStatus"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/stations/status:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Station Status"
+      operationId: "handleGetStationStatus"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/StationStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Station Status"
+      operationId: "handleSetStationStatus"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/StationStatus"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/evses/status:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Evse Status"
+      operationId: "handleGetEvseStatus"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EvseStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Evse Status"
+      operationId: "handleSetEvseStatus"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EvseStatus"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/evse-connectors/status:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Evse Connector Status"
+      operationId: "handleGetEvseConnectorStatus"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EvseConnectorStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Evse Connector Status"
+      operationId: "handleSetEvseConnectorStatus"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EvseConnectorStatus"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/pools/station-auth-whitelist:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Station Whitelist"
+      operationId: "handleGetStationWhitelist"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/Token"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Station Whitelist"
+      operationId: "handleSetStationWhitelist"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/Token"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/pools/vendor-auth-whitelist:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Vendor Whitelist"
+      operationId: "handleGetVendorWhitelist"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/Token"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Vendor Whitelist"
+      operationId: "handleSetVendorWhitelist"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/Token"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/pools/model-auth-whitelist:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Model Whitelist"
+      operationId: "handleGetModelWhitelist"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/Token"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Model Whitelist"
+      operationId: "handleSetModelWhitelist"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/Token"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/ev-user-token-whitelist:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get EV User Token Whitelist"
+      operationId: "handleGetEVUserTokenWhitelist"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/Token"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set EV User Token Whitelist"
+      operationId: "handleSetEVUserTokenWhitelist"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/Token"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/pools/default:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Default Pool Data"
+      operationId: "handleGetDefaultPoolData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/PoolData"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/constraints/out-of-business:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Location Out Of Business Constraints"
+      operationId: "handleGetLocationOutOfBusinessConstraints"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/LocationOutOfBusinessConstraints"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Location Out Of Business Constraints"
+      operationId: "handleSetLocationOutOfBusinessConstraints"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/LocationOutOfBusinessConstraints"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Structure"
+      summary: "Delete Location Out Of Business Constraints"
+      operationId: "handleDeleteLocationOutOfBusinessConstraints"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/ev-user-auth-settings/out-of-business:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Location Out Of Business Ev User Auth Settings"
+      operationId: "handleGetLocationOutOfBusinessEvUserAuthSettings"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/LocationOutOfBusinessEvUserAuthSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Location Out Of Business Ev User Auth Settings"
+      operationId: "handleSetLocationOutOfBusinessEvUserAuthSettings"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/LocationOutOfBusinessEvUserAuthSettings"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Structure"
+      summary: "Delete Location Out Of Business Ev User Auth Settings"
+      operationId: "handleDeleteLocationOutOfBusinessEvUserAuthSettings"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/pools/connection-settings/out-of-business:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Pool Out Of Business Connection Settings"
+      operationId: "handleGetPoolOutOfBusinessConnectionSettings"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/PoolOutOfBusinessConnectionSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Pool Out Of Business Connection Settings"
+      operationId: "handleSetPoolOutOfBusinessConnectionSettings"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/PoolOutOfBusinessConnectionSettings"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Structure"
+      summary: "Delete Pool Out Of Business Connection Settings"
+      operationId: "handleDeletePoolOutOfBusinessConnectionSettings"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/session-control-settings:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Location Default Session Control Settings"
+      operationId: "handleGetLocationDefaultSessionControlSettings"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/LocationDefaultSessionControlSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Location Default Session Control Settings"
+      operationId: "handleSetLocationDefaultSessionControlSettings"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/LocationDefaultSessionControlSettings"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Structure"
+      summary: "Delete Location Default Session Control Settings"
+      operationId: "handleDeleteLocationDefaultSessionControlSettings"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/session-control-settings/out-of-business:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Location Out Of Business Session Control Settings"
+      operationId: "handleGetLocationOutOfBusinessSessionControlSettings"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/LocationOutOfBusinessSessionControlSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Location Out Of Business Session Control Settings"
+      operationId: "handleSetLocationOutOfBusinessSessionControlSettings"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/LocationOutOfBusinessSessionControlSettings"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Structure"
+      summary: "Delete Location Out Of Business Session Control Settings"
+      operationId: "handleDeleteLocationOutOfBusinessSessionControlSettings"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /structure/default-ev-user-preferences/out-of-business:
+    get:
+      tags:
+      - "Structure"
+      summary: "Get Location Out Of Business Session Usage Settings"
+      operationId: "handleGetLocationOutOfBusinessSessionUsageSettings"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/LocationOutOfBusinessSessionUsageSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Structure"
+      summary: "Set Location Out Of Business Session Usage Settings"
+      operationId: "handleSetLocationOutOfBusinessSessionUsageSettings"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/LocationOutOfBusinessSessionUsageSettings"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Structure"
+      summary: "Delete Location Out Of Business Session Usage Settings"
+      operationId: "handleDeleteLocationOutOfBusinessSessionUsageSettings"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /sessions:
+    get:
+      tags:
+      - "Session"
+      summary: "Get Sessions"
+      operationId: "handleGetSessions"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/SessionData"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Session"
+      summary: "Set Sessions"
+      operationId: "handleSetSessions"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/SessionData"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Session"
+      summary: "Delete Sessions"
+      operationId: "handleDeleteSessions"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /sessions/status:
+    get:
+      tags:
+      - "Session"
+      summary: "Get Session Status"
+      operationId: "handleGetSessionStatus"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/SessionStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Session"
+      summary: "Set Session Status"
+      operationId: "handleSetSessionStatus"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/SessionStatus"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Session"
+      summary: "Delete Session Status"
+      operationId: "handleDeleteSessionStatus"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /sessions/sources:
+    get:
+      tags:
+      - "Session"
+      summary: "Get Session Sources"
+      operationId: "handleGetSessionSources"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/SessionSources"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Session"
+      summary: "Set Session Sources"
+      operationId: "handleSetSessionSources"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/SessionSources"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Session"
+      summary: "Delete Session Sources"
+      operationId: "handleDeleteSessionSources"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /sessions/electrical-characteristics:
+    get:
+      tags:
+      - "Session"
+      summary: "Get Session Elec Characteristics"
+      operationId: "handleGetSessionElecCharacteristics"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/SessionElecCharacteristics"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Session"
+      summary: "Set Session Elec Characteristics"
+      operationId: "handleSetSessionElecCharacteristics"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/SessionElecCharacteristics"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Session"
+      summary: "Delete Session Elec Characteristics"
+      operationId: "handleDeleteSessionElecCharacteristics"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /sessions/ems-settings:
+    get:
+      tags:
+      - "Session"
+      summary: "Get Session Ems Settings"
+      operationId: "handleGetSessionEmsSettings"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/SessionEmsSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Session"
+      summary: "Set Session Ems Settings"
+      operationId: "handleSetSessionEmsSettings"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/SessionEmsSettings"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Session"
+      summary: "Delete Session Ems Settings"
+      operationId: "handleDeleteSessionEmsSettings"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /sessions/ev-user-preferences:
+    get:
+      tags:
+      - "Session"
+      summary: "Get Session Ev User Preferences"
+      operationId: "handleGetSessionEvUserPreferences"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/SessionEvUserPreferences"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Session"
+      summary: "Set Session Ev User Preferences"
+      operationId: "handleSetSessionEvUserPreferences"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/SessionEvUserPreferences"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Session"
+      summary: "Delete Session Ev User Preferences"
+      operationId: "handleDeleteSessionEvUserPreferences"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /sessions/physical-constraints:
+    get:
+      tags:
+      - "Session"
+      summary: "Get Session Physical Constraints"
+      operationId: "handleGetSessionPhysicalConstraints"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/SessionPhysicalConstraints"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Session"
+      summary: "Set Session Physical Constraints"
+      operationId: "handleSetSessionPhysicalConstraints"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/SessionPhysicalConstraints"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Session"
+      summary: "Delete Session Physical Constraints"
+      operationId: "handleDeleteSessionPhysicalConstraints"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /sessions/sources/restrictions:
+    get:
+      tags:
+      - "Session"
+      summary: "Get Session Source Restrictions"
+      operationId: "handleGetSessionSourceRestrictions"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/SessionSourceRestrictions"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Session"
+      summary: "Set Session Source Restrictions"
+      operationId: "handleSetSessionSourceRestrictions"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/SessionSourceRestrictions"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Session"
+      summary: "Delete Session Source Restrictions"
+      operationId: "handleDeleteSessionSourceRestrictions"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /sessions/commands:
+    get:
+      tags:
+      - "Session"
+      summary: "Get Session Commands"
+      operationId: "handleGetSessionCommands"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/SessionCommandData"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Session"
+      summary: "Set Session Commands"
+      operationId: "handleSetSessionCommands"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/SessionCommandData"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Session"
+      summary: "Delete Session Commands"
+      operationId: "handleDeleteSessionCommands"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /sessions/commands/status:
+    get:
+      tags:
+      - "Session"
+      summary: "Get Session Command Status"
+      operationId: "handleGetSessionCommandStatus"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/CommandStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Session"
+      summary: "Set Session Command Status"
+      operationId: "handleSetSessionCommandStatus"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/CommandStatus"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Session"
+      summary: "Delete Session Command Status"
+      operationId: "handleDeleteSessionCommandStatus"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /sessions/commands/locations:
+    get:
+      tags:
+      - "Session"
+      summary: "Get Session Command Locations"
+      operationId: "handleGetSessionCommandLocations"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/SessionCommandLocations"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Session"
+      summary: "Set Session Command Locations"
+      operationId: "handleSetSessionCommandLocations"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/SessionCommandLocations"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Session"
+      summary: "Delete Session Command Locations"
+      operationId: "handleDeleteSessionCommandLocations"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /sessions/operational-data:
+    get:
+      tags:
+      - "Session"
+      summary: "Get Session Operational Data"
+      operationId: "handleGetSessionOperationalData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/SessionOperationalData"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Session"
+      summary: "Set Session Operational Data"
+      operationId: "handleSetSessionOperationalData"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/SessionOperationalData"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Session"
+      summary: "Delete Session Operational Data"
+      operationId: "handleDeleteSessionOperationalData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /sessions/control-settings:
+    get:
+      tags:
+      - "Session"
+      summary: "Get Session Control Settings"
+      operationId: "handleGetSessionControlSettings"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/SessionControlSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Session"
+      summary: "Set Session Control Settings"
+      operationId: "handleSetSessionControlSettings"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/SessionControlSettings"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "Session"
+      summary: "Delete Session Control Settings"
+      operationId: "handleDeleteSessionControlSettings"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /observation-points/default:
+    get:
+      tags:
+      - "Grid"
+      summary: "Get Default Observation Point"
+      operationId: "handleGetDefaultObservationPoint"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/DefaultObservationPoint"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /grid-connections/default/constraints:
+    get:
+      tags:
+      - "Grid"
+      summary: "Get Default Grid Connection Constraints"
+      operationId: "handleGetDefaultGridConnectionConstraints"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/DefaultGridConnectionConstraints"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /observation-points/metering-data:
+    get:
+      tags:
+      - "Grid"
+      summary: "Get Metering Data"
+      operationId: "handleGetMeteringData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/MeteringData"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /observation-points/metering-data-forecast:
+    get:
+      tags:
+      - "Grid"
+      summary: "Get Metering Data Forecast"
+      operationId: "handleGetMeteringDataForecast"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/MeteringData"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /grid-connections:
+    get:
+      tags:
+      - "Grid"
+      summary: "Get Grid Connections"
+      operationId: "handleGetGridConnections"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/GridPointData"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "Grid"
+      summary: "Set Grid Data"
+      operationId: "handleSetGridData"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/GridPointData"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /observation-points:
+    get:
+      tags:
+      - "Grid"
+      summary: "Get Observation Points"
+      operationId: "handleGetObservationPoints"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/ObservationPoints"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /observation-points/locations:
+    get:
+      tags:
+      - "Grid"
+      summary: "Get Observation Point Locations"
+      operationId: "handleGetObservationPointLocations"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/ObservationPointLocations"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /observation-points/energy-sources:
+    get:
+      tags:
+      - "Grid"
+      summary: "Get Observation Point Energy Sources"
+      operationId: "handleGetObservationPointEnergySources"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/ObservationPointEnergySources"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /observation-points/constraints:
+    get:
+      tags:
+      - "Grid"
+      summary: "Get Observation Point Constraints"
+      operationId: "handleGetObservationPointConstraints"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/ObservationPointConstraints"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /observation-points/connectors:
+    get:
+      tags:
+      - "Grid"
+      summary: "Get Observation Point Connectors"
+      operationId: "handleGetObservationPointConnectors"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/ObservationPointConnectors"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /observation-sources:
+    get:
+      tags:
+      - "Grid"
+      summary: "Get Observation Sources"
+      operationId: "handleGetObservationSources"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/ObservationSources"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /observation-sources/locations:
+    get:
+      tags:
+      - "Grid"
+      summary: "Get Observation Sources Locations"
+      operationId: "handleGetObservationSourcesLocations"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/ObservationSourcesLocations"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /grid-connections/locations:
+    get:
+      tags:
+      - "Grid"
+      summary: "Get Grid Connections Locations"
+      operationId: "handleGetGridConnectionsLocations"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/GridConnectionsLocations"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /observation-sources/connectivity-status:
+    get:
+      tags:
+      - "Grid"
+      summary: "Get Observation Sources Status"
+      operationId: "handleGetObservationSourcesStatus"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/ObservationSourcesStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /observation-points/electrical-characteristics:
+    get:
+      tags:
+      - "Grid"
+      summary: "Get observation source connectivity status (same handler as /observation-sources/connectivity-status)"
+      operationId: "handleGetObservationSourcesStatus_electricalCharacteristics"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/ObservationSourcesStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /grid-connections/forecast:
+    post:
+      tags:
+      - "Grid"
+      summary: "Set Grid Forecast"
+      operationId: "handleSetGridForecast"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/GridForecast"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /grid-connections/metering-data:
+    post:
+      tags:
+      - "Grid"
+      summary: "Set Grid Metering Data"
+      operationId: "handleSetGridMeteringData"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/MeteringData"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /grid-connections/connector:
+    post:
+      tags:
+      - "Grid"
+      summary: "Set Grid Connector Association"
+      operationId: "handleSetGridConnectorAssociation"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/GridConnectorAssociation"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /grid-connections/meters:
+    post:
+      tags:
+      - "Grid"
+      summary: "Set Grid Meters"
+      operationId: "handleSetGridMeters"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/GridMeters"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /grid-connections/restrictions:
+    post:
+      tags:
+      - "Grid"
+      summary: "Set Grid Restrictions"
+      operationId: "handleSetGridRestrictions"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/GridRestrictions"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /grid-connections/meters/restrictions:
+    post:
+      tags:
+      - "Grid"
+      summary: "Set Grid Meter Restrictions"
+      operationId: "handleSetGridMeterRestrictions"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/GridMeterRestrictions"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /grid-connections/electrical-characteristics:
+    post:
+      tags:
+      - "Grid"
+      summary: "Set Grid Electrical Characteristics"
+      operationId: "handleSetGridElectricalCharacteristics"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/GridElectricalCharacteristics"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /ess-elements/ess-packs:
+    get:
+      tags:
+      - "ESS"
+      summary: "Get Ess Pack Data"
+      operationId: "handleGetEssPackData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EssPackData"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "ESS"
+      summary: "Set Ess Pack Data"
+      operationId: "handleSetEssPackData"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EssPackData"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "ESS"
+      summary: "Delete Ess Pack Data"
+      operationId: "handleDeleteEssPackData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /ess-elements/default/constraints:
+    get:
+      tags:
+      - "ESS"
+      summary: "Get Ess Default Constraints"
+      operationId: "handleGetEssDefaultConstraints"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EssDefaultConstraints"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "ESS"
+      summary: "Set Ess Default Constraints"
+      operationId: "handleSetEssDefaultConstraints"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EssDefaultConstraints"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "ESS"
+      summary: "Delete Ess Default Constraints"
+      operationId: "handleDeleteEssDefaultConstraints"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /ess-sources:
+    get:
+      tags:
+      - "ESS"
+      summary: "Get Ess Sources"
+      operationId: "handleGetEssSources"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EssSources"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "ESS"
+      summary: "Set Ess Sources"
+      operationId: "handleSetEssSources"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EssSources"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "ESS"
+      summary: "Delete Ess Source Data"
+      operationId: "handleDeleteEssSourceData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /ess-elements/operational-data:
+    get:
+      tags:
+      - "ESS"
+      summary: "Get Ess Operational Data"
+      operationId: "handleGetEssOperationalData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EssOperationalData"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "ESS"
+      summary: "Set Ess Operational Data"
+      operationId: "handleSetEssOperationalData"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EssOperationalData"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "ESS"
+      summary: "Delete Ess Operational Data"
+      operationId: "handleDeleteEssOperationalData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /ess-elements/commands/status:
+    get:
+      tags:
+      - "ESS"
+      summary: "Get Ess Command Status"
+      operationId: "handleGetEssCommandStatus"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EssCommandStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "ESS"
+      summary: "Set Ess Command Status"
+      operationId: "handleSetEssCommandStatus"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EssCommandStatus"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "ESS"
+      summary: "Delete Ess Command Status"
+      operationId: "handleDeleteEssCommandStatus"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /ess-elements/commands/locations:
+    get:
+      tags:
+      - "ESS"
+      summary: "Get Ess Command Locations"
+      operationId: "handleGetEssCommandLocations"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EssCommandLocations"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "ESS"
+      summary: "Set Ess Command Locations"
+      operationId: "handleSetEssCommandLocations"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EssCommandLocations"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "ESS"
+      summary: "Delete Ess Command Locations"
+      operationId: "handleDeleteEssCommandLocations"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /ess-elements/strings:
+    get:
+      tags:
+      - "ESS"
+      summary: "Get Ess String Data"
+      operationId: "handleGetEssStringData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EssStringData"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "ESS"
+      summary: "Set Ess String Data"
+      operationId: "handleSetEssStringData"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EssStringData"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "ESS"
+      summary: "Delete Ess String Data"
+      operationId: "handleDeleteEssStringData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /ess-elements/modules:
+    get:
+      tags:
+      - "ESS"
+      summary: "Get Ess Module Data"
+      operationId: "handleGetEssModuleData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EssModuleData"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "ESS"
+      summary: "Set Ess Module Data"
+      operationId: "handleSetEssModuleData"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EssModuleData"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "ESS"
+      summary: "Delete Ess Module Data"
+      operationId: "handleDeleteEssModuleData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /ess-elements/cell-blocks:
+    get:
+      tags:
+      - "ESS"
+      summary: "Get Ess Cell Block Data"
+      operationId: "handleGetEssCellBlockData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EssCellBlockData"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "ESS"
+      summary: "Set Ess Cell Block Data"
+      operationId: "handleSetEssCellBlockData"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EssCellBlockData"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "ESS"
+      summary: "Delete Ess Cell Block Data"
+      operationId: "handleDeleteEssCellBlockData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /ess-elements/cells:
+    get:
+      tags:
+      - "ESS"
+      summary: "Get Ess Cell Data"
+      operationId: "handleGetEssCellData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EssCellData"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "ESS"
+      summary: "Set Ess Cell Data"
+      operationId: "handleSetEssCellData"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EssCellData"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "ESS"
+      summary: "Delete Ess Cell Data"
+      operationId: "handleDeleteEssCellData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /ess-elements/out-of-business/constraints:
+    get:
+      tags:
+      - "ESS"
+      summary: "Get Ess Out Of Business Constraints"
+      operationId: "handleGetEssOutOfBusinessConstraints"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EssOutOfBusinessConstraints"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "ESS"
+      summary: "Set Ess Out Of Business Constraints"
+      operationId: "handleSetEssOutOfBusinessConstraints"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EssOutOfBusinessConstraints"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "ESS"
+      summary: "Delete Ess Out Of Business Constraints"
+      operationId: "handleDeleteEssOutOfBusinessConstraints"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /ess-elements/default/usage-settings:
+    get:
+      tags:
+      - "ESS"
+      summary: "Get Ess Default Usage Settings"
+      operationId: "handleGetEssDefaultUsageSettings"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EssDefaultUsageSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "ESS"
+      summary: "Set Ess Default Usage Settings"
+      operationId: "handleSetEssDefaultUsageSettings"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EssDefaultUsageSettings"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "ESS"
+      summary: "Delete Ess Default Usage Settings"
+      operationId: "handleDeleteEssDefaultUsageSettings"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /ess-elements/out-of-business/usage-settings:
+    get:
+      tags:
+      - "ESS"
+      summary: "Get Ess Out Of Business Usage Settings"
+      operationId: "handleGetEssOutOfBusinessUsageSettings"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EssOutOfBusinessUsageSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "ESS"
+      summary: "Set Ess Out Of Business Usage Settings"
+      operationId: "handleSetEssOutOfBusinessUsageSettings"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EssOutOfBusinessUsageSettings"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "ESS"
+      summary: "Delete Ess Out Of Business Usage Settings"
+      operationId: "handleDeleteEssOutOfBusinessUsageSettings"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /ess-elements/element-pairs:
+    get:
+      tags:
+      - "ESS"
+      summary: "Get Ess Element Pairs"
+      operationId: "handleGetEssElementPairs"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EssElementPairs"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "ESS"
+      summary: "Set Ess Element Pairs"
+      operationId: "handleSetEssElementPairs"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EssElementPairs"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "ESS"
+      summary: "Delete Ess Element Pairs"
+      operationId: "handleDeleteEssElementPairs"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /ess-elements/restrictions:
+    get:
+      tags:
+      - "ESS"
+      summary: "Get Ess Location Restrictions"
+      operationId: "handleGetEssLocationRestrictions"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EssLocationRestrictions"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "ESS"
+      summary: "Set Ess Location Restrictions"
+      operationId: "handleSetEssLocationRestrictions"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EssLocationRestrictions"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "ESS"
+      summary: "Delete Ess Location Restrictions"
+      operationId: "handleDeleteEssLocationRestrictions"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /ess-sources/restrictions:
+    get:
+      tags:
+      - "ESS"
+      summary: "Get Ess Source Location Restrictions"
+      operationId: "handleGetEssSourceLocationRestrictions"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EssSourceLocationRestrictions"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "ESS"
+      summary: "Set Ess Source Location Restrictions"
+      operationId: "handleSetEssSourceLocationRestrictions"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EssSourceLocationRestrictions"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "ESS"
+      summary: "Delete Ess Source Location Restrictions"
+      operationId: "handleDeleteEssSourceLocationRestrictions"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /ess-elements/status:
+    get:
+      tags:
+      - "ESS"
+      summary: "Get Ess Status"
+      operationId: "handleGetEssStatus"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EssStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "ESS"
+      summary: "Set Ess Status"
+      operationId: "handleSetEssStatus"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EssStatus"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "ESS"
+      summary: "Delete Ess Status"
+      operationId: "handleDeleteEssStatus"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /ess-elements/commands:
+    get:
+      tags:
+      - "ESS"
+      summary: "Get Ess Commands"
+      operationId: "handleGetEssCommands"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/EssCommands"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags:
+      - "ESS"
+      summary: "Set Ess Commands"
+      operationId: "handleSetEssCommands"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EssCommands"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags:
+      - "ESS"
+      summary: "Delete Ess Commands"
+      operationId: "handleDeleteEssCommands"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /ess-elements/commands/set-charging-profile:
+    post:
+      tags:
+      - "ESS"
+      summary: "Set Ess Charging Profile"
+      operationId: "handleSetEssChargingProfile"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "array"
+              items:
+                $ref: "#/components/schemas/EssChargingProfile"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /prosumers:
+    get:
+      tags:
+      - "Prosumer"
+      summary: "Get Prosumer Data"
+      operationId: "handleGetProsumerData"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/ProsumerData"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /prosumers/locations:
+    get:
+      tags:
+      - "Prosumer"
+      summary: "Get Prosumer Locations"
+      operationId: "handleGetProsumerLocations"
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Skip"
+      responses:
+        "200":
+          description: "successful operation"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/ProsumerLocations"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+components:
+  responses:
+    Success:
+      description: "Success"
+      content:
+        "text/plain":
+          schema:
+            type: "string"
+    BadRequest:
+      description: "Bad request"
+      content:
+        "text/plain":
+          schema:
+            type: "string"
+    Unauthorized:
+      description: "Unauthorized access"
+      content:
+        "text/plain":
+          schema:
+            type: "string"
+    Forbidden:
+      description: "Forbidden"
+      content:
+        "text/plain":
+          schema:
+            type: "string"
+    NotFound:
+      description: "Not found"
+      content:
+        "text/plain":
+          schema:
+            type: "string"
+    ServerError:
+      description: "Internal server error"
+      content:
+        "text/plain":
+          schema:
+            type: "string"
+  parameters:
+    Limit:
+      name: "limit"
+      in: "query"
+      description: "Limit for retrieved elements"
+      required: false
+      schema:
+        type: "integer"
+    Skip:
+      name: "skip"
+      in: "query"
+      description: "Number of returned elements to skip"
+      required: false
+      schema:
+        type: "integer"
+  schemas:
+    DefaultEmsSettings:
+      type: "object"
+      description: "Default Ems Settings record."
+    DefaultGridConnectionConstraints:
+      type: "object"
+      description: "Default Grid Connection Constraints record."
+    DefaultObservationPoint:
+      type: "object"
+      description: "Default Observation Point record."
+    EVSEConnectorData:
+      type: "object"
+      description: "EVSE Connector Data record."
+    EVUserAuthSettings:
+      type: "object"
+      description: "EV User Auth Settings record."
+    EmsModeSettings:
+      type: "object"
+      description: "Ems Mode Settings record."
+    EssCellBlockData:
+      type: "object"
+      description: "Ess Cell Block Data record."
+    EssCellData:
+      type: "object"
+      description: "Ess Cell Data record."
+    EssChargingProfile:
+      type: "object"
+      description: "Ess Charging Profile record."
+    EssCommandLocations:
+      type: "object"
+      description: "Ess Command Locations record."
+    EssCommandStatus:
+      type: "object"
+      description: "Ess Command Status record."
+    EssCommands:
+      type: "object"
+      description: "Ess Commands record."
+    EssDefaultConstraints:
+      type: "object"
+      description: "Ess Default Constraints record."
+    EssDefaultUsageSettings:
+      type: "object"
+      description: "Ess Default Usage Settings record."
+    EssElementPairs:
+      type: "object"
+      description: "Ess Element Pairs record."
+    EssLocationRestrictions:
+      type: "object"
+      description: "Ess Location Restrictions record."
+    EssModuleData:
+      type: "object"
+      description: "Ess Module Data record."
+    EssOperationalData:
+      type: "object"
+      description: "Ess Operational Data record."
+    EssOutOfBusinessConstraints:
+      type: "object"
+      description: "Ess Out Of Business Constraints record."
+    EssOutOfBusinessUsageSettings:
+      type: "object"
+      description: "Ess Out Of Business Usage Settings record."
+    EssPackData:
+      type: "object"
+      description: "Ess Pack Data record."
+    EssSourceLocationRestrictions:
+      type: "object"
+      description: "Ess Source Location Restrictions record."
+    EssSources:
+      type: "object"
+      description: "Ess Sources record."
+    EssStatus:
+      type: "object"
+      description: "Ess Status record."
+    EssStringData:
+      type: "object"
+      description: "Ess String Data record."
+    EvUserPreferences:
+      type: "object"
+      description: "Ev User Preferences record."
+    GridConnectionsLocations:
+      type: "object"
+      description: "Grid Connections Locations record."
+    GridConnectorAssociation:
+      type: "object"
+      description: "Grid Connector Association record."
+    GridElectricalCharacteristics:
+      type: "object"
+      description: "Grid Electrical Characteristics record."
+    GridForecast:
+      type: "object"
+      description: "Grid Forecast record."
+    GridMeterRestrictions:
+      type: "object"
+      description: "Grid Meter Restrictions record."
+    GridMeters:
+      type: "object"
+      description: "Grid Meters record."
+    GridRestrictions:
+      type: "object"
+      description: "Grid Restrictions record."
+    LocationConstraints:
+      type: "object"
+      description: "Location Constraints record."
+    LocationDefaultBatteries:
+      type: "object"
+      description: "Location Default Batteries record."
+    LocationDefaultSessionControlSettings:
+      type: "object"
+      description: "Location Default Session Control Settings record."
+    LocationOutOfBusinessConstraints:
+      type: "object"
+      description: "Location Out Of Business Constraints record."
+    LocationOutOfBusinessEvUserAuthSettings:
+      type: "object"
+      description: "Location Out Of Business Ev User Auth Settings record."
+    LocationOutOfBusinessSessionControlSettings:
+      type: "object"
+      description: "Location Out Of Business Session Control Settings record."
+    LocationOutOfBusinessSessionUsageSettings:
+      type: "object"
+      description: "Location Out Of Business Session Usage Settings record."
+    LocationPairs:
+      type: "object"
+      description: "Location Pairs record."
+    ObservationPointConnectors:
+      type: "object"
+      description: "Observation Point Connectors record."
+    ObservationPointConstraints:
+      type: "object"
+      description: "Observation Point Constraints record."
+    ObservationPointEnergySources:
+      type: "object"
+      description: "Observation Point Energy Sources record."
+    ObservationPointLocations:
+      type: "object"
+      description: "Observation Point Locations record."
+    ObservationPoints:
+      type: "object"
+      description: "Observation Points record."
+    ObservationSources:
+      type: "object"
+      description: "Observation Sources record."
+    ObservationSourcesLocations:
+      type: "object"
+      description: "Observation Sources Locations record."
+    ObservationSourcesStatus:
+      type: "object"
+      description: "Observation Sources Status record."
+    PoolConnectionSettings:
+      type: "object"
+      description: "Pool Connection Settings record."
+    PoolOutOfBusinessConnectionSettings:
+      type: "object"
+      description: "Pool Out Of Business Connection Settings record."
+    ProsumerData:
+      type: "object"
+      description: "Prosumer Data record."
+    ProsumerLocations:
+      type: "object"
+      description: "Prosumer Locations record."
+    SessionCommandLocations:
+      type: "object"
+      description: "Session Command Locations record."
+    SessionControlSettings:
+      type: "object"
+      description: "Session Control Settings record."
+    SessionElecCharacteristics:
+      type: "object"
+      description: "Session Elec Characteristics record."
+    SessionEmsSettings:
+      type: "object"
+      description: "Session Ems Settings record."
+    SessionEvUserPreferences:
+      type: "object"
+      description: "Session Ev User Preferences record."
+    SessionOperationalData:
+      type: "object"
+      description: "Session Operational Data record."
+    SessionPhysicalConstraints:
+      type: "object"
+      description: "Session Physical Constraints record."
+    SessionSourceRestrictions:
+      type: "object"
+      description: "Session Source Restrictions record."
+    SessionSources:
+      type: "object"
+      description: "Session Sources record."
+    StationStatus:
+      type: "object"
+      description: "Station Status record."
+    StructureCommandLocations:
+      type: "object"
+      description: "Structure Command Locations record."
+    ModuleType : 
+        type : "string"
+        enum :
+            - core
+            - flex
+            - grid
+            - user
+            - session
+            - structure
+            - res 
+            - ess 
+            - ext-ems 
+            - emsp
+    ConnectorType : 
+        type : "string"
+        enum :
+            - xEmsConnector
+            - EmsConnector
+            - QOcppConnector
+            - LinkyConnector
+    StructureLevel :
+        type : "string"
+        enum :
+            - evse
+            - pool
+            - station
+            - all 
+    ConnectorData:
+        type : "object"
+        required : 
+            - connectorId
+        properties:
+            connectorId :
+                type : "string"
+            name :
+                type : "string"
+            type :
+                $ref: '#/components/schemas/ConnectorType'
+            enablingModules :
+                type : "array"
+                items:
+                    $ref: "#/components/schemas/ModuleType"
+            listeningModules :
+                type : "array"
+                items:
+                    $ref: "#/components/schemas/ModuleType"
+            createdAt:
+                type : "string"
+                format : "date-time"
+            lastUpdated:
+                type : "string"
+                format : "date-time"
+    ConnectorLocation:
+        type : "object"
+        required : 
+            - connectorId
+        properties:
+            connectorId :
+                type : "string"
+            poolIdList :
+                type : "array"
+                items:
+                    type : "string"
+            stationIdList :
+                type : "array"
+                items:
+                    type : "string"
+            evseIdList :
+                type : "array"
+                items:
+                    type: "string"
+    ValueType:
+      type : "string"
+      enum : 
+        - Active power
+        - Reactive power
+        - Apparent power
+        - Energy
+        - Percentage
+        - Ratio
+        - Duration 
+        
+    ValuePerType:
+      type : "object"
+      properties:
+        type : 
+          $ref: "#/components/schemas/ValueType"
+        values:
+          type : "number"
+            
+    CommandStatus:
+        type: "string"
+        enum : 
+            - pending
+            - accepted
+            - refused 
+            - error
+            - unknown
+          
+  
+  
+    # ResValues:
+    #   type: "object"
+    #   properties:
+    #     poolId:
+    #       type: "string"
+    #     currentValues:
+    #       type: "array"
+    #       items:
+    #         $ref: "#/components/schemas/PhysicalValue"
+  
+
+    EvseConnectorStatus:
+        type : string
+        enum:
+            - unknown
+            - available
+            - faulted
+            - charging
+            - reserved
+            - unavailable
+            - plugged
+    GeoLocation:
+      type: "object"
+      properties:
+        latitude:
+          type: "string"
+        longitude:
+          type: "string"
+
+    GeoLocationWithName:
+      type: "object"
+      properties:
+        latitude:
+          type: "string"
+        longitude:
+          type: "string"
+        name:
+          type: "string"
+
+    Text:
+      type: "object"
+      properties:
+        language:
+          type: "string"
+        text:
+          type: "string"
+          
+    ImageInfo:
+      type: "object"
+      properties:
+        url:
+          type: "string"
+        thumbnail:
+          type: "string"
+        extension:
+          type: "string"
+        category:
+          type: "string"
+        width:
+          type: "integer"
+        height:
+          type: "integer"
+          
+    CompanyInfo:
+      type: "object"
+      required :
+        - name
+      properties:
+        name:
+          type: "string"
+        website:
+          type: "string"
+        logo:
+          $ref: "#/components/schemas/ImageInfo"
+          
+    Token:
+      type: "object"
+      properties:
+        id:
+          type: "string"
+        type:
+          type: "string"
+          enum :
+            - UNKNOWN
+            - EMAID
+            - ISO14443
+            - ISO15693
+            - KEY_CODE
+            - MAC_ADDRESS
+        issuer:
+          type: "string"
+        expiryTime:
+          type: "string"
+          format : "date-time"
+        lastUpdated:
+          type: "string"
+          format : "date-time"
+        createdAt:
+          type: "string"
+          format : "date-time"
+    
+          
+    EvseStatus:
+        type : string
+        enum :
+            - unknown
+            - available
+            - blocked
+            - charging
+            - reserved
+            - inoperative
+            - outoforder
+            - planned
+    ChargerCapability:
+        type : string
+        enum :
+            - charging_profile_capability
+            - credit_card_payable
+            - remote_stop_start_capable
+            - reservable
+            - rfid_reader
+            - unlock_capable
+            - unknown
+    
+    EvseData:
+      type: "object"
+      required :
+        - evseId
+      properties:
+        evseId :
+          type: "string"
+        evseUid :
+          type: "object"
+          properties:
+            stationName : 
+                type : "string"
+            evseNb:
+                type : "integer"
+        name : 
+          type : "string"
+        vendorId : 
+          type : "string"
+        model : 
+          type : "string"
+        capability:
+            type : "array"
+            items : 
+                $ref: "#/components/schemas/ChargerCapability"
+        status:
+          $ref: "#/components/schemas/EvseStatus"
+        coordinates :
+          $ref: "#/components/schemas/GeoLocation"
+        reference:
+          type : "string"
+        directions :
+          type : "array"
+          items : 
+            $ref: "#/components/schemas/Text"
+        images :
+          type : "array"
+          items : 
+            $ref: "#/components/schemas/ImageInfo"
+        connectors:
+          type : "array"
+          items : 
+            type : string
+        lastUpdated:
+          type : "string"
+          format : "date-time"
+        createdAt:
+          type : "string"
+          format : "date-time"
+          
+    StationData:
+      type: "object"
+      required :
+        - stationId
+        - name
+        - status
+      properties:
+        stationId :
+          type: "string"
+        name :
+          type: "string"
+        evses :
+          type : "array"
+          items : 
+            type : "string"
+        multiplier:
+          type: "number"
+        status:
+          type : "string"
+          enum:
+            - UNKNOWN
+            - AVAILABLE
+            - BLOCKED
+            - UNAVAILABLE
+            - CHARGING
+            - INOPERATIVE
+            - OUTOFORDER
+            - RESERVED
+            - OFFLINE
+        mathFunction:
+          type: "string"
+          enum:
+            - LINEAR
+            - EXPONENTIAL
+        createdAt:
+          type : "string"
+          format : "date-time"     
+        lastUpdated:
+          type : "string"
+          format : "date-time"
+          
+    PoolStatus:
+        type : string
+        enum : 
+            - active
+            - inactive
+    PoolType:
+        type : string
+        enum : 
+            - ON_STREET
+            - PARKING_GARAGE
+            - UNDERGROUND_GARAGE
+            - PARKING_LOT
+            - OTHER 
+            - UNKNOWN
+    PoolData:
+      type: "object"
+      required :
+        - poolId
+        - status
+        - type
+        - name
+        - coordinates
+        - mainOperator
+      properties:
+        poolId:
+          type : "string"
+        status:
+          $ref: "#/components/schemas/PoolStatus"
+        type :
+          $ref: "#/components/schemas/PoolType"
+        name : 
+          type : "string"
+        address :
+          type : "string"
+        city :
+          type : "string"
+        areaCode : 
+            type : "string"
+        postalCode :
+          type : "string"
+        country :
+          type : "string"
+        coordinates :
+          $ref: "#/components/schemas/GeoLocation"
+        otherLocations :
+          type : "array"
+          items :
+            $ref: "#/components/schemas/GeoLocationWithName"
+        stations :
+          type : "array"
+          items : 
+            type : "string"
+        directions :
+          type : "array"
+          items : 
+            $ref: "#/components/schemas/Text"
+        images :
+          type : "array"
+          items : 
+            $ref: "#/components/schemas/ImageInfo"
+        mainOperator :
+          $ref: "#/components/schemas/CompanyInfo"
+        suboperator :
+          $ref: "#/components/schemas/CompanyInfo"
+        owner :
+          $ref: "#/components/schemas/CompanyInfo"
+        timeZone:
+          type : "string"
+        lastUpdated :
+          type : "string"
+          format : "date-time"
+        createdAt :
+          type : "string"
+          format : "date-time"     
+          
+   
+
+    StructureCommandType:
+        type: "string"
+        enum : 
+            - change_availability
+            - get_logs
+            - reserve 
+            - update_firmware
+            - reset
+            - connection_request
+            - unlock_connector
+            
+    StructureCommandData:
+        type: "object"
+        required :
+            - id
+        properties :
+            id :
+                type : "string"
+            poolId :
+                type : "string"
+            stationId:
+                type : "string"
+            evseId : 
+                type: "integer"
+            status :
+                $ref: "#/components/schemas/CommandStatus"
+            type : 
+                $ref: "#/components/schemas/StructureCommandType"
+            inputParameters :
+                type : "object"
+            results :
+                type : "object"
+            receivedAt :
+                type : "string"
+                format : "date-time"
+            lastUpdated:
+                type : "string"
+                format : "date-time"
+                
+    SessionStatus :
+        type : string
+        enum :
+            - unknown
+            - pending 
+            - charging
+            - completed 
+            - invalid
+    AuthenticationMethod :
+        type : string
+        enum :
+            - unknown
+            - remote start
+            - real time demand
+            - authorization list
+            - free for all 
+            - local
+            
+    SessionData:
+        type: "object"
+        required :
+        - sessionId
+        properties:
+            sessionId:
+                type: string
+            evseId:
+                type: string
+            evseConnectorUid :
+                type : "object"
+                properties:
+                    evseUid : 
+                      type : "object"
+                      properties :
+                        stationName : 
+                            type : "string"
+                        evseNb : 
+                            type : "integer"
+                    connectorNb : 
+                        type : "integer"
+            emspId:
+                type: string
+            transactionId:
+                type: string
+            userConstraints:
+                type: "object"
+                properties :
+                    departureTime:
+                        type : "string"
+                        format : "date-time"
+                    requiredEnergy:
+                        type : "number"
+            constraints:
+                type: "object"
+                properties :
+                    maxChargeLevel:
+                        $ref: "#/components/schemas/ValuePerType"
+                    maxDischargeLevel:
+                        $ref: "#/components/schemas/ValuePerType"
+                    minChargeLevel:
+                        $ref: "#/components/schemas/ValuePerType"
+                    minDischargeLevel:
+                        $ref: "#/components/schemas/ValuePerType"
+                    chargeThresholdLevel:
+                        $ref: "#/components/schemas/ValuePerType"
+                    dischargeThresholdLevel:
+                        $ref: "#/components/schemas/ValuePerType"
+                    batteryCapacity:
+                        type: "number"
+                    v2gCompatible:
+                        type : "boolean"   
+            status :
+                $ref: "#/components/schemas/SessionStatus"
+            authorizationMethod :
+                $ref: "#/components/schemas/AuthenticationMethod"
+            userToken :
+                type: "string"
+            arrivalDate : 
+                type : "string"
+                format : "date-time"
+            endDate :
+                type : "string"
+                format : "date-time"
+            meterStart :
+                type : "number"
+            meterStop :
+                type : "number"
+            lastUpdated :
+                type : "string"
+                format : "date-time"
+            createdAt :
+                type : "string"
+                format : "date-time"
+    
+    SessionCommandType:
+      type : "string"
+      enum :
+      - set_charging_profile
+      - start_new_transaction
+      - stop_transaction
+      - authorize
+      - clear_charging_profile   
+   
+    SessionCommandData:
+        type: "object"
+        required :
+            - id
+        properties :
+            id :
+                type : "string"
+            poolId :
+                type : "string"
+            stationId:
+                type : "string"
+            evseId : 
+                type: "integer"
+            status :
+                $ref: "#/components/schemas/CommandStatus"
+            type : 
+                $ref: "#/components/schemas/SessionCommandType"
+            inputParameters :
+                type : "object"
+            results :
+                type : "object"
+            receivedAt :
+                type : "string"
+                format : "date-time"
+            lastUpdated:
+                type : "string"
+                format : "date-time"
+        
+                
+    MeteringData : 
+        type : "object"
+        required : 
+            - timestamp
+        properties :
+            timestamp :
+                type : "string"
+                format : "date-time"
+            instantaneousActivePower :
+                type : "number"
+            instantaneousReactivePower :
+                type : "number"
+            instantaneousApparentPower :
+                type : "number"
+            powerFactor:
+                type : "number"
+                
+    GridPointData:
+        type : "object"
+        required : 
+            - id
+        properties : 
+            id : 
+                type : "string"
+            name : 
+                type : "string"
+            supplier : 
+                type : "string"
+            deliveryPointId :
+                type : "string"
+            location :
+                type : object
+                properties :
+                    locationId:
+                        type : "string"
+                    level:
+                        $ref: "#/components/schemas/StructureLevel"
+            createdAt :
+                type : "string"
+                format : "date-time"
+            lastUpdated:
+                type : "string"
+                format : "date-time"
+                
+
+                
+externalDocs:
+  description: "Troca technical specification"
+  url: "https://docs.google.com/document/d/15-tdfYNjGcySnQPYyhHZyPkhu7RcCC0VCZ10uZk8jzs/edit#"
