@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -20,7 +21,7 @@ class TrocaModel(DataClassJSONMixin):
 
 
 class ConnectorType(StrEnum):
-    """``CommandStatus`` schema."""
+    """``Connector.connectorType`` values."""
 
     X_EMS = "xEmsConnector"
     EMS = "EmsConnector"
@@ -46,114 +47,49 @@ class SessionCommandType(StrEnum):
     START_NEW_TRANSACTION = "start_new_transaction"
     STOP_TRANSACTION = "stop_transaction"
     AUTHORIZE = "authorize"
-
-
-class EvseStatus(StrEnum):
-    """``EvseStatus`` schema."""
-
     UNKNOWN = "unknown"
-    AVAILABLE = "available"
-    BLOCKED = "blocked"
-    CHARGING = "charging"
-    RESERVED = "reserved"
-    INOPERATIVE = "inoperative"
-    OUTOFORDER = "outoforder"
-    PLANNED = "planned"
-
-
-class StationStatus(StrEnum):
-    """``StationData.status`` enum (distinct casing/values from EvseStatus)."""
-
-    UNKNOWN = "UNKNOWN"
-    AVAILABLE = "AVAILABLE"
-    BLOCKED = "BLOCKED"
-    UNAVAILABLE = "UNAVAILABLE"
-    CHARGING = "CHARGING"
-    INOPERATIVE = "INOPERATIVE"
-    OUTOFORDER = "OUTOFORDER"
-    RESERVED = "RESERVED"
-    OFFLINE = "OFFLINE"
-
-
-class ChargerCapability(StrEnum):
-    """``ChargerCapability`` schema -- feature flags, not electrical ratings."""
-
-    CHARGING_PROFILE_CAPABILITY = "charging_profile_capability"
-    CREDIT_CARD_PAYABLE = "credit_card_payable"
-    REMOTE_STOP_START_CAPABLE = "remote_stop_start_capable"
-    RESERVABLE = "reservable"
-    RFID_READER = "rfid_reader"
-    UNLOCK_CAPABLE = "unlock_capable"
-    UNKNOWN = "unknown"
-
-
-class ChargingRateUnit(StrEnum):
-    """OCPP charging rate unit. Not enumerated by the Troca spec itself --
-
-    ``SessionCommandData.inputParameters`` is documented only as a free-form
-    object -- but a live probe accepted a standard OCPP ``ChargingSchedule``
-    shape, so this follows OCPP 1.6/2.x conventions until Troca confirms
-    otherwise.
-    """
-
-    WATTS = "W"
-    AMPS = "A"
-
-
-class ChargingProfilePurpose(StrEnum):
-    """OCPP charging profile purpose (see ``ChargingRateUnit`` caveat)."""
-
-    CHARGE_POINT_MAX_PROFILE = "ChargePointMaxProfile"
-    TX_DEFAULT_PROFILE = "TxDefaultProfile"
-    TX_PROFILE = "TxProfile"
-
-
-class ChargingProfileKind(StrEnum):
-    """OCPP charging profile kind (see ``ChargingRateUnit`` caveat)."""
-
-    ABSOLUTE = "Absolute"
-    RECURRING = "Recurring"
-    RELATIVE = "Relative"
-
-
-class RecurrencyKind(StrEnum):
-    """OCPP recurrency kind (see ``ChargingRateUnit`` caveat)."""
-
-    DAILY = "Daily"
-    WEEKLY = "Weekly"
 
 
 class SessionStatus(StrEnum):
-    """``SessionStatus`` schema."""
+    """``SessionStatus`` schema - reported via ``GET /sessions/status`` (not on ``SessionData`` itself)."""
 
-    UNKNOWN = "unknown"
     PENDING = "pending"
     CHARGING = "charging"
     COMPLETED = "completed"
     INVALID = "invalid"
-
-
-class AuthenticationMethod(StrEnum):
-    """``AuthenticationMethod`` schema."""
-
+    CLEARED = "cleared"
     UNKNOWN = "unknown"
-    REMOTE_START = "remote start"
-    REAL_TIME_DEMAND = "real time demand"
-    AUTHORIZATION_LIST = "authorization list"
-    FREE_FOR_ALL = "free for all"
-    LOCAL = "local"
+
+
+class StructureLevel(StrEnum):
+    """``StructureLevel`` schema - the level of the structure hierarchy a ``LocationId`` refers to."""
+
+    POOL = "pool"
+    STATION = "station"
+    EVSE = "evse"
+    EVSE_CONNECTOR = "evseConnector"
+    ALL = "all"
+    UNKNOWN = "unknown"
+
+
+class ScheduleSyncMode(StrEnum):
+    """How the CSIP-Aus schedule is kept in sync with the charging station (persisted on TrocaConfig)."""
+
+    # Send OCPP charging profiles directly to the station via Troca's OCPP passthrough (see troca.ocpp_schedule)
+    OCPP = "ocpp"
+
+    # Send schedules via Troca's own session command API (see troca.session_schedule)
+    TROCA_SESSION = "troca_session"
 
 
 class ValueType(StrEnum):
-    """``ValueType`` schema -- the unit a ``ValuePerType`` figure is in."""
+    """``ValueType`` schema (subset) - what a ``TEmsValue``/``Bounds`` figure measures."""
 
     ACTIVE_POWER = "Active power"
     REACTIVE_POWER = "Reactive power"
     APPARENT_POWER = "Apparent power"
-    ENERGY = "Energy"
+    VOLTAGE = "Voltage"
     PERCENTAGE = "Percentage"
-    RATIO = "Ratio"
-    DURATION = "Duration"
 
 
 # --------------------------------------------------------------------------
@@ -162,31 +98,56 @@ class ValueType(StrEnum):
 
 
 @dataclass(frozen=True)
-class Coordinates(TrocaModel):
-    """``GeoLocation`` schema. Observed live as string lat/lng, e.g. "0"."""
+class TEmsValue(TrocaModel):
+    """``TEmsValue`` schema - a unit tagged number. When ``unit`` is omitted, the default unit for ``value_type``
+    applies (kW/kVAR/kVA for the power types)."""
 
-    latitude: str | None = None
-    longitude: str | None = None
-
-
-@dataclass(frozen=True)
-class LocalizedText(TrocaModel):
-    """``Text`` schema."""
-
-    language: str | None = None
-    text: str | None = None
+    value: float
+    value_type: str | None = field(default=None, metadata={"alias": "valueType"})
+    unit: str | None = None
 
 
 @dataclass(frozen=True)
-class ImageInfo(TrocaModel):
-    """``ImageInfo`` schema."""
+class TEmsValuePhase(TrocaModel):
+    """``TEmsValuePhase`` schema - a ``TEmsValue`` for all phases (global) and per phase."""
 
-    url: str | None = None
-    thumbnail: str | None = None
-    extension: str | None = None
-    category: str | None = None
-    width: int | None = None
-    height: int | None = None
+    global_: TEmsValue | None = field(default=None, metadata={"alias": "global"})
+    l1: TEmsValue | None = None
+    l2: TEmsValue | None = None
+    l3: TEmsValue | None = None
+
+
+@dataclass(frozen=True)
+class Bounds(TrocaModel):
+    """``Bounds`` schema - a min/max range or fixed value.
+
+    NOTE: Although the schema allows min/max, a session schedule period carrying only min/max is rejected by the
+    server with "The schedule is invalid: every period needs a fixed Active power value" (probed 2026-09-28), so
+    ``value`` must be set for anything sent via ``set_charging_profile``."""
+
+    value: float | None = None
+    min: float | None = None
+    max: float | None = None
+    value_type: str | None = field(default=None, metadata={"alias": "valueType"})
+    unit: str | None = None
+
+
+@dataclass(frozen=True)
+class LocationId(TrocaModel):
+    """``LocationId`` schema - identifies one element of the pool/station/EVSE/connector hierarchy."""
+
+    location_id: str = field(metadata={"alias": "locationId"})
+    level: StructureLevel
+
+
+def numeric_value(v: float | TEmsValue | None) -> float | None:
+    """The spec types several fields as ``TEmsValue`` objects, but the live server returns bare numbers for them
+    (eg ``meterStart: 1``, ``chargedEnergy: 0``) - models accept either, and this extracts the number."""
+    if v is None:
+        return None
+    if isinstance(v, TEmsValue):
+        return v.value
+    return float(v)
 
 
 # --------------------------------------------------------------------------
@@ -196,7 +157,8 @@ class ImageInfo(TrocaModel):
 
 @dataclass(frozen=True)
 class Connector(TrocaModel):
-    """``Connector`` schema, as returned by ``GET /config/connectors``."""
+    """``Connector`` schema, as returned by ``GET /config/connectors``. For OCPP connectors, ``name`` is also the
+    first path segment of the OCPP passthrough (eg ``qocppConnector2.1``)."""
 
     name: str
     connector_id: str = field(metadata={"alias": "connectorId"})
@@ -210,7 +172,7 @@ class Connector(TrocaModel):
 
 
 # --------------------------------------------------------------------------
-# Device metadata (Pool / Station / EVSE)
+# Structure (Pool / Station / EVSE / hierarchy)
 # --------------------------------------------------------------------------
 
 
@@ -221,14 +183,6 @@ class Pool(TrocaModel):
     pool_id: str = field(metadata={"alias": "poolId"})
     name: str
     type: str | None = None
-    status: str | None = None
-    address: str | None = None
-    city: str | None = None
-    area_code: str | None = field(default=None, metadata={"alias": "areaCode"})
-    postal_code: str | None = field(default=None, metadata={"alias": "postalCode"})
-    coordinates: Coordinates | None = None
-    time_zone: str | None = field(default=None, metadata={"alias": "timeZone"})
-    alternative_names: list[str] = field(default_factory=list, metadata={"alias": "alternativeNames"})
     issuer_id: str | None = field(default=None, metadata={"alias": "issuerId"})
     created_at: str | None = field(default=None, metadata={"alias": "createdAt"})
     last_updated: str | None = field(default=None, metadata={"alias": "lastUpdated"})
@@ -236,14 +190,14 @@ class Pool(TrocaModel):
 
 @dataclass(frozen=True)
 class Station(TrocaModel):
-    """``StationData`` schema, as returned by ``GET /structure/stations``."""
+    """``StationData`` schema, as returned by ``GET /structure/stations``. ``name`` is the OCPP charging station
+    identity (eg ``FR*TRI*E123``) used by the OCPP passthrough."""
 
     station_id: str = field(metadata={"alias": "stationId"})
     name: str
-    evses: list[str] = field(default_factory=list)
-    multiplier: float | None = None
-    status: StationStatus | None = None
-    math_function: str | None = field(default=None, metadata={"alias": "mathFunction"})
+    model: str | None = None
+    vendor_id: str | None = field(default=None, metadata={"alias": "vendorId"})
+    issuer_id: str | None = field(default=None, metadata={"alias": "issuerId"})
     created_at: str | None = field(default=None, metadata={"alias": "createdAt"})
     last_updated: str | None = field(default=None, metadata={"alias": "lastUpdated"})
 
@@ -256,29 +210,24 @@ class EvseUid(TrocaModel):
 
 @dataclass(frozen=True)
 class Evse(TrocaModel):
-    """``EvseData`` schema, as returned by ``GET /structure/evses``.
-
-    NOTE: this is the metadata Troca currently exposes about a connected
-    device -- vendor/model/capability flags and connector IDs. It does NOT
-    include electrical ratings (max power, charge/discharge rate, min/max
-    voltage); those fields are not present in the published schema. See the
-    module docstring.
-    """
+    """``EvseData`` schema, as returned by ``GET /structure/evses``. Carries no electrical ratings - those are
+    only available by asking the station directly via the OCPP passthrough (GetVariables)."""
 
     evse_id: str = field(metadata={"alias": "evseId"})
     evse_uid: EvseUid | None = field(default=None, metadata={"alias": "evseUid"})
     name: str | None = None
-    vendor_id: str | None = field(default=None, metadata={"alias": "vendorId"})
-    model: str | None = None
-    capability: list[ChargerCapability] = field(default_factory=list)
-    status: EvseStatus | None = None
-    coordinates: Coordinates | None = None
-    reference: str | None = None
-    directions: list[LocalizedText] = field(default_factory=list)
-    images: list[ImageInfo] = field(default_factory=list)
-    connectors: list[str] = field(default_factory=list)
+    issuer_id: str | None = field(default=None, metadata={"alias": "issuerId"})
     created_at: str | None = field(default=None, metadata={"alias": "createdAt"})
     last_updated: str | None = field(default=None, metadata={"alias": "lastUpdated"})
+
+
+@dataclass(frozen=True)
+class StructurePair(TrocaModel):
+    """``GET /structure/pairs`` entry - a parent/child link in the pool -> station -> evse -> evseConnector
+    hierarchy. This is the only way to navigate from a session's (evseConnector) location up to its EVSE."""
+
+    high_level_structure: LocationId = field(metadata={"alias": "highLevelStructure"})
+    low_level_structure: LocationId = field(metadata={"alias": "lowLevelStructure"})
 
 
 # --------------------------------------------------------------------------
@@ -288,171 +237,278 @@ class Evse(TrocaModel):
 
 @dataclass(frozen=True)
 class MeteringReading(TrocaModel):
-    """``MeteringData`` schema, as returned by ``GET /observation-points/metering-data``."""
+    """``MeteringData`` schema, as returned by ``GET /observation-points/metering-data``. Sign convention (per
+    Trialog) is positive while charging (importing), negative while discharging.
+
+    NOTE: As of 2026-09-28 this endpoint returns nothing with the Trialog charging station simulator - it only
+    samples Energy.Active.Import.Register and (per Trialog) won't produce active power or SoC."""
 
     timestamp: str
-    instantaneous_active_power: float | None = field(default=None, metadata={"alias": "instantaneousActivePower"})
-    instantaneous_reactive_power: float | None = field(default=None, metadata={"alias": "instantaneousReactivePower"})
-    instantaneous_apparent_power: float | None = field(default=None, metadata={"alias": "instantaneousApparentPower"})
-    power_factor: float | None = field(default=None, metadata={"alias": "powerFactor"})
+    observation_point_id: str | None = field(default=None, metadata={"alias": "observationPointId"})
+    instantaneous_active_power: TEmsValuePhase | None = field(
+        default=None, metadata={"alias": "instantaneousActivePower"}
+    )
+    instantaneous_reactive_power: TEmsValuePhase | None = field(
+        default=None, metadata={"alias": "instantaneousReactivePower"}
+    )
+    rms_voltage: TEmsValuePhase | None = field(default=None, metadata={"alias": "rmsVoltage"})
 
 
 # --------------------------------------------------------------------------
-# Sessions -- this is where EV charge/discharge-rate metadata actually lives
+# Sessions
 # --------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
-class ValuePerType(TrocaModel):
-    """``ValuePerType`` schema. NOTE: the spec names the numeric field
+class Token(TrocaModel):
+    """``Token`` schema - the EV user's auth token."""
 
-    ``values`` (plural) despite it holding a single number; kept as an alias
-    so the Python attribute can be sensibly named ``value``.
-    """
-
-    type: ValueType | None = None
-    value: float | None = field(default=None, metadata={"alias": "values"})
-
-
-@dataclass(frozen=True)
-class SessionEvseConnectorUid(TrocaModel):
-    evse_uid: EvseUid | None = field(default=None, metadata={"alias": "evseUid"})
-    connector_nb: int | None = field(default=None, metadata={"alias": "connectorNb"})
-
-
-@dataclass(frozen=True)
-class SessionUserConstraints(TrocaModel):
-    departure_time: str | None = field(default=None, metadata={"alias": "departureTime"})
-    required_energy: float | None = field(default=None, metadata={"alias": "requiredEnergy"})
-
-
-@dataclass(frozen=True)
-class SessionConstraints(TrocaModel):
-    """The EV's own charge/discharge-rate metadata for this session -- this
-
-    is the answer to "what's the max power / charge rate of the connected
-    EV", not a static EVSE property (see module docstring / client docs).
-    """
-
-    max_charge_level: ValuePerType | None = field(default=None, metadata={"alias": "maxChargeLevel"})
-    min_charge_level: ValuePerType | None = field(default=None, metadata={"alias": "minChargeLevel"})
-    max_discharge_level: ValuePerType | None = field(default=None, metadata={"alias": "maxDischargeLevel"})
-    min_discharge_level: ValuePerType | None = field(default=None, metadata={"alias": "minDischargeLevel"})
-    charge_threshold_level: ValuePerType | None = field(default=None, metadata={"alias": "chargeThresholdLevel"})
-    discharge_threshold_level: ValuePerType | None = field(default=None, metadata={"alias": "dischargeThresholdLevel"})
-    battery_capacity: float | None = field(default=None, metadata={"alias": "batteryCapacity"})
-    v2g_compatible: bool | None = field(default=None, metadata={"alias": "v2gCompatible"})
+    value: str
+    type: str | None = None
+    token_issuer: str | None = field(default=None, metadata={"alias": "tokenIssuer"})
+    expiry_time: str | None = field(default=None, metadata={"alias": "expiryTime"})
 
 
 @dataclass(frozen=True)
 class SessionData(TrocaModel):
-    """``SessionData`` schema, as returned by ``GET /sessions``.
+    """``SessionData`` schema, as returned by ``GET /sessions``. Its status is NOT on this object - see
+    ``SessionStatusEntry``.
 
-    Only exists once a vehicle is actually plugged in and a session has
-    been created -- there is no way to query an EVSE's rated capability
-    ahead of a session via this object.
-    """
+    Observed quirks: ``createdAt``/``lastUpdated`` are 2 hours behind ``arrivalDate``/``endDate`` (the latter
+    match the OCPP messages, so treat them as the correct times), ``meterStop`` is ``-0.001`` while a session is
+    ongoing and ``endDate`` is only present once it's over."""
 
     session_id: str = field(metadata={"alias": "sessionId"})
-    evse_id: str | None = field(default=None, metadata={"alias": "evseId"})
-    evse_connector_uid: SessionEvseConnectorUid | None = field(default=None, metadata={"alias": "evseConnectorUid"})
-    emsp_id: str | None = field(default=None, metadata={"alias": "emspId"})
+    location: LocationId | None = None
     transaction_id: str | None = field(default=None, metadata={"alias": "transactionId"})
-    user_constraints: SessionUserConstraints | None = field(default=None, metadata={"alias": "userConstraints"})
-    constraints: SessionConstraints | None = None
-    status: SessionStatus | None = None
-    authorization_method: AuthenticationMethod | None = field(default=None, metadata={"alias": "authorizationMethod"})
-    user_token: str | None = field(default=None, metadata={"alias": "userToken"})
     arrival_date: str | None = field(default=None, metadata={"alias": "arrivalDate"})
     end_date: str | None = field(default=None, metadata={"alias": "endDate"})
-    meter_start: float | None = field(default=None, metadata={"alias": "meterStart"})
-    meter_stop: float | None = field(default=None, metadata={"alias": "meterStop"})
+    user_token: Token | None = field(default=None, metadata={"alias": "userToken"})
+    authorization_method: str | None = field(default=None, metadata={"alias": "authorizationMethod"})
+    meter_start: float | TEmsValue | None = field(default=None, metadata={"alias": "meterStart"})
+    meter_stop: float | TEmsValue | None = field(default=None, metadata={"alias": "meterStop"})
+    custom_data: dict[str, Any] = field(default_factory=dict, metadata={"alias": "customData"})
     created_at: str | None = field(default=None, metadata={"alias": "createdAt"})
     last_updated: str | None = field(default=None, metadata={"alias": "lastUpdated"})
 
 
+@dataclass(frozen=True)
+class SessionStatusEntry(TrocaModel):
+    """``GET /sessions/status`` entry - a timestamped history, so a session's current status is its entry with
+    the latest ``timestamp``."""
+
+    session_id: str = field(metadata={"alias": "sessionId"})
+    status: SessionStatus
+    timestamp: str
+
+
+@dataclass(frozen=True)
+class SessionOperationalData(TrocaModel):
+    """``SessionOperationalData`` schema, as returned by ``GET /sessions/operational-data``.
+
+    NOTE: Trialog say SoC is reported here, but neither the schema nor the live server (2026-09-28) has any such
+    field - and with the simulator, ``chargedEnergy`` isn't reliably updated from the meter values."""
+
+    session_id: str = field(metadata={"alias": "sessionId"})
+    timestamp: str
+    charged_energy: float | TEmsValue | None = field(default=None, metadata={"alias": "chargedEnergy"})
+    discharged_energy: float | TEmsValue | None = field(default=None, metadata={"alias": "dischargedEnergy"})
+
+
 # --------------------------------------------------------------------------
-# Charging schedule (charging profile) read/write
+# Session commands (charging schedule read/write)
 # --------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
-class ChargingSchedulePeriod(TrocaModel):
-    start_period: int = field(metadata={"alias": "startPeriod"})
-    limit: float
-    number_phases: int | None = field(default=None, metadata={"alias": "numberPhases"})
+class SchedulePeriod(TrocaModel):
+    """``SchedulePeriod`` schema - one period of an ``ActivePowerSchedule``."""
+
+    start_time: str = field(metadata={"alias": "startTime"})
+    end_time: str = field(metadata={"alias": "endTime"})
+    global_: Bounds | None = field(default=None, metadata={"alias": "global"})
 
 
 @dataclass(frozen=True)
-class ChargingSchedule(TrocaModel):
-    charging_rate_unit: ChargingRateUnit = field(metadata={"alias": "chargingRateUnit"})
-    charging_schedule_period: list[ChargingSchedulePeriod] = field(metadata={"alias": "chargingSchedulePeriod"})
-    duration: int | None = None
-    start_schedule: str | None = field(default=None, metadata={"alias": "startSchedule"})
-    min_charging_rate: float | None = field(default=None, metadata={"alias": "minChargingRate"})
+class ActivePowerSchedule(TrocaModel):
+    """The (undocumented) schedule body of a ``set_charging_profile`` command. Discovered from a request Trialog
+    sent on our behalf - see ``set_charging_profile_parameters`` for how it's wrapped.
+
+    Troca converts this into an OCPP 2.1 ``SetChargingProfile`` (TxProfile, CentralSetpoint operation mode) for
+    the session's current transaction, with one OCPP period per ``SchedulePeriod``. Each period's
+    ``global_.value`` (kW) becomes a fixed OCPP *setpoint* (not just a limit) with its sign INVERTED - a value
+    of -7 was sent to the station as setpoint +7000W (ie charge at 7kW) and +5 as -5000W (discharge at 5kW)."""
+
+    start_time: str = field(metadata={"alias": "startTime"})
+    end_time: str = field(metadata={"alias": "endTime"})
+    periods: list[SchedulePeriod]
+    value_type: str = field(default=ValueType.ACTIVE_POWER, metadata={"alias": "valueType"})
+
+
+def set_charging_profile_parameters(schedule: ActivePowerSchedule) -> dict[str, Any]:
+    """Wraps an ActivePowerSchedule into the ``CommandParameter.parameters`` shape Troca expects for a
+    ``set_charging_profile`` command."""
+    return {"schedule": {ValueType.ACTIVE_POWER.value: {"recurrency": False, "schedule": schedule.to_dict()}}}
+
+
+def parse_set_charging_profile_parameters(parameters: dict[str, Any]) -> ActivePowerSchedule | None:
+    """Inverse of set_charging_profile_parameters - returns None if parameters isn't of that shape."""
+    try:
+        raw = parameters["schedule"][ValueType.ACTIVE_POWER.value]["schedule"]
+        return ActivePowerSchedule.from_dict(raw)
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 @dataclass(frozen=True)
-class ChargingProfile(TrocaModel):
-    """Shape of ``SessionCommandData.inputParameters`` for a
-    ``set_charging_profile`` command. This is the object used to express a
-    time-bounded power limit.
-    """
+class CommandParameter(TrocaModel):
+    """``CommandParameter`` schema - timestamped command input/response parameters."""
 
-    charging_profile_id: int = field(metadata={"alias": "chargingProfileId"})
-    stack_level: int = field(metadata={"alias": "stackLevel"})
-    charging_profile_purpose: ChargingProfilePurpose = field(metadata={"alias": "chargingProfilePurpose"})
-    charging_profile_kind: ChargingProfileKind = field(metadata={"alias": "chargingProfileKind"})
-    charging_schedule: ChargingSchedule = field(metadata={"alias": "chargingSchedule"})
-    recurrency_kind: RecurrencyKind | None = field(default=None, metadata={"alias": "recurrencyKind"})
-    valid_from: str | None = field(default=None, metadata={"alias": "validFrom"})
-    valid_to: str | None = field(default=None, metadata={"alias": "validTo"})
-    transaction_id: int | None = field(default=None, metadata={"alias": "transactionId"})
-
-
-@dataclass(frozen=True)
-class SessionCommandRequest(TrocaModel):
-    """Request body for ``POST /sessions/commands``, per ``SessionCommandData``.
-
-    ``input_parameters`` is a raw dict (rather than typed as
-    ``ChargingProfile``) because the same envelope is reused for
-    ``start_new_transaction`` / ``stop_transaction`` / ``authorize``, each
-    with a different payload shape. Build it with ``ChargingProfile(...).to_dict()``
-    for ``set_charging_profile`` / ``clear_charging_profile`` commands.
-    """
-
-    id: str
-    type: SessionCommandType
-    pool_id: str | None = field(default=None, metadata={"alias": "poolId"})
-    station_id: str | None = field(default=None, metadata={"alias": "stationId"})
-    evse_id: int | None = field(default=None, metadata={"alias": "evseId"})
-    input_parameters: dict[str, Any] | None = field(default=None, metadata={"alias": "inputParameters"})
+    timestamp: str
+    parameters: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class SessionCommand(TrocaModel):
-    """Response shape of ``GET /sessions/commands``.
+    """``SessionCommandData`` schema - both the request body of ``POST /sessions/commands`` and each entry of
+    ``GET /sessions/commands``.
 
-    NOTE: this does NOT match the documented ``SessionCommandData`` schema.
-    Live probing of the dev tenant on 2026-09-21 showed the server returns
-    ``commandId`` (not the client-supplied ``id``), plus ``issuerId`` and
-    ``customData`` that aren't in the spec at all, while ``receivedAt`` from
-    the spec was absent. Fields below reflect the observed response;
-    ``id`` is kept for round-tripping a request you just sent, in case a
-    future server revision echoes it back.
-    """
+    A POSTed command has no location - it isn't validated or dispatched to a station until its location is
+    set via ``POST /sessions/commands/locations``. Troca then records a second, internal command of its own
+    (with ``customData.clientCommandId`` pointing back at ours) - use ``is_client_command`` to tell them apart."""
 
-    command_id: str | None = field(default=None, metadata={"alias": "commandId"})
-    id: str | None = None
-    type: SessionCommandType | None = None
-    status: CommandStatus | None = None
-    pool_id: str | None = field(default=None, metadata={"alias": "poolId"})
-    station_id: str | None = field(default=None, metadata={"alias": "stationId"})
-    evse_id: int | None = field(default=None, metadata={"alias": "evseId"})
-    input_parameters: dict[str, Any] | None = field(default=None, metadata={"alias": "inputParameters"})
-    results: dict[str, Any] | None = None
-    issuer_id: str | None = field(default=None, metadata={"alias": "issuerId"})
+    command_id: str = field(metadata={"alias": "commandId"})
+    type: SessionCommandType
+    input_parameters: CommandParameter | None = field(default=None, metadata={"alias": "inputParameters"})
     custom_data: dict[str, Any] = field(default_factory=dict, metadata={"alias": "customData"})
-    received_at: str | None = field(default=None, metadata={"alias": "receivedAt"})
+    issuer_id: str | None = field(default=None, metadata={"alias": "issuerId"})
     created_at: str | None = field(default=None, metadata={"alias": "createdAt"})
     last_updated: str | None = field(default=None, metadata={"alias": "lastUpdated"})
+
+    @property
+    def is_client_command(self) -> bool:
+        return "clientCommandId" not in self.custom_data
+
+
+@dataclass(frozen=True)
+class SessionCommandStatusEntry(TrocaModel):
+    """``SessionCommandStatus`` schema, as returned by ``GET /sessions/commands/status``."""
+
+    command_id: str = field(metadata={"alias": "commandId"})
+    status: CommandStatus
+    timestamp: str
+
+
+@dataclass(frozen=True)
+class SessionCommandLocation(TrocaModel):
+    """``SessionCommandLocations`` schema - request body of ``POST /sessions/commands/locations`` and each entry
+    of the equivalent GET. For ``set_charging_profile``, the location must be at the ``evse`` level."""
+
+    command_id: str = field(metadata={"alias": "commandId"})
+    location_id: LocationId = field(metadata={"alias": "locationId"})
+
+
+# --------------------------------------------------------------------------
+# OCPP passthrough (OCPP 2.x payloads, not Troca's own schemas)
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class OcppEvse(TrocaModel):
+    id: int
+    connector_id: int | None = field(default=None, metadata={"alias": "connectorId"})
+
+
+@dataclass(frozen=True)
+class OcppComponent(TrocaModel):
+    name: str
+    instance: str | None = None
+    evse: OcppEvse | None = None
+
+
+@dataclass(frozen=True)
+class OcppVariable(TrocaModel):
+    name: str
+    instance: str | None = None
+
+
+@dataclass(frozen=True)
+class GetVariableData(TrocaModel):
+    """OCPP 2.x ``GetVariableDataType``."""
+
+    component: OcppComponent
+    variable: OcppVariable
+    attribute_type: str | None = field(default=None, metadata={"alias": "attributeType"})
+
+
+@dataclass(frozen=True)
+class GetVariableResult(TrocaModel):
+    """OCPP 2.x ``GetVariableResultType``. ``attribute_value`` is only set when ``attribute_status`` is
+    ``Accepted``."""
+
+    attribute_status: str = field(metadata={"alias": "attributeStatus"})
+    component: OcppComponent
+    variable: OcppVariable
+    attribute_type: str | None = field(default=None, metadata={"alias": "attributeType"})
+    attribute_value: str | None = field(default=None, metadata={"alias": "attributeValue"})
+
+    @property
+    def accepted(self) -> bool:
+        return self.attribute_status == "Accepted"
+
+
+# Pulls the OCPP version off the end of an OCPP connector's name, eg "qocppConnector2.1" -> "2.1"
+OCPP_VERSION_PATTERN = re.compile(r"(\d+(?:\.\d+)+)$")
+
+
+def ocpp_version_from_connector_name(name: str) -> str | None:
+    """Troca's OCPP connectors are named for the OCPP version they speak, eg "qocppConnector2.1" -> "2.1"."""
+    match = OCPP_VERSION_PATTERN.search(name)
+    return None if match is None else match.group(1)
+
+
+@dataclass(frozen=True)
+class OcppTarget:
+    """Identifies where OCPP passthrough messages are sent - POST /{connector_name}/ocpp/{ocpp_version}/command/
+    {messageType}/{station_name}"""
+
+    connector_name: str  # The Troca connector's name, eg "qocppConnector2.1"
+    ocpp_version: str  # eg "2.1"
+    station_name: str  # The OCPP charging station identity, eg "FR*TRI*E123"
+
+
+class OcppChargingProfilePurpose(StrEnum):
+    CHARGING_STATION_MAX_PROFILE = "ChargingStationMaxProfile"
+    TX_DEFAULT_PROFILE = "TxDefaultProfile"
+    TX_PROFILE = "TxProfile"
+
+
+@dataclass(frozen=True)
+class OcppChargingSchedulePeriod(TrocaModel):
+    """OCPP 2.1 ``ChargingSchedulePeriodType`` (subset). ``discharge_limit`` is <= 0 (OCPP 2.1 only)."""
+
+    start_period: int = field(metadata={"alias": "startPeriod"})
+    limit: float | None = None
+    discharge_limit: float | None = field(default=None, metadata={"alias": "dischargeLimit"})
+
+
+@dataclass(frozen=True)
+class OcppChargingSchedule(TrocaModel):
+    """OCPP 2.x ``ChargingScheduleType`` (subset)."""
+
+    id: int
+    charging_rate_unit: str = field(metadata={"alias": "chargingRateUnit"})
+    charging_schedule_period: list[OcppChargingSchedulePeriod] = field(metadata={"alias": "chargingSchedulePeriod"})
+    start_schedule: str | None = field(default=None, metadata={"alias": "startSchedule"})
+    duration: int | None = None
+
+
+@dataclass(frozen=True)
+class OcppChargingProfile(TrocaModel):
+    """OCPP 2.x ``ChargingProfileType`` (subset)."""
+
+    id: int
+    stack_level: int = field(metadata={"alias": "stackLevel"})
+    charging_profile_purpose: OcppChargingProfilePurpose = field(metadata={"alias": "chargingProfilePurpose"})
+    charging_profile_kind: str = field(metadata={"alias": "chargingProfileKind"})
+    charging_schedule: list[OcppChargingSchedule] = field(metadata={"alias": "chargingSchedule"})

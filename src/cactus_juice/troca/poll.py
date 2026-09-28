@@ -1,32 +1,34 @@
 import logging
-from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cactus_juice.crud import add_ocpp_readings, upsert_ocpp_metadata
-from cactus_juice.csipaus.controls import calculate_schedule_values
 from cactus_juice.db import DatabaseConnection
 from cactus_juice.troca.client import TrocaClient
 from cactus_juice.troca.mapping import (
-    current_values_to_charging_profile,
+    DEFAULT_OCPP_EVSE_NB,
+    rated_power_variables,
     reading_to_db,
-    session_constraints_to_metadata,
+    variables_to_metadata,
 )
-from cactus_juice.troca.models import ChargingProfile, CommandStatus, SessionCommand, SessionCommandType, SessionStatus
+from cactus_juice.troca.models import (
+    ConnectorType,
+    LocationId,
+    OcppTarget,
+    ScheduleSyncMode,
+    StructureLevel,
+    ocpp_version_from_connector_name,
+)
+from cactus_juice.troca.ocpp_schedule import PushedProfile, sync_ocpp_schedule
+from cactus_juice.troca.session_schedule import sync_session_schedule
 
 logger = logging.getLogger(__name__)
 
-# A fixed identity for the profile we push - resubmitting a ChargingProfile with the same id/stack_level is
-# expected (per OCPP convention) to replace whatever was previously in effect rather than stacking alongside it.
-CHARGING_PROFILE_ID = 1
-CHARGING_PROFILE_STACK_LEVEL = 0
+POLL_EPOCH = datetime.min.replace(tzinfo=UTC)
 
-# Session statuses that mean "not currently drawing/able to draw power" - excluded when looking for the session
-# whose constraints should back OCPPMetadata.
-INACTIVE_SESSION_STATUSES = (SessionStatus.COMPLETED, SessionStatus.INVALID)
+DEFAULT_SCHEDULE_SYNC_MODE = ScheduleSyncMode.OCPP
 
 
 @dataclass(slots=True)
@@ -42,11 +44,24 @@ class ClientState:
     client: TrocaClient
     db: DatabaseConnection
 
-    connector_id: str  # The ID of the Troca connector that will be used for comms
+    connector_id: str | None  # The ID of the Troca connector that will be used for comms
     readings_poll: Pollable  # Poll status of the readings
     schedule_poll: Pollable  # Poll status of the charge schedule
     metadata_poll: Pollable  # Poll status of the connected EVSE metadata
     ramp_step: timedelta
+
+    # Troca returns its whole metering history on every poll - only readings after this are new
+    last_reading_at: datetime
+
+    schedule_sync_mode: ScheduleSyncMode = DEFAULT_SCHEDULE_SYNC_MODE
+    pushed_profile: PushedProfile | None = None  # What was last pushed to the station (ScheduleSyncMode.OCPP only)
+
+    # Configured values that would otherwise be discovered via the Troca API (None = discover on each poll)
+    ocpp_connector_name: str | None = None
+    ocpp_version: str | None = None
+    ocpp_station_name: str | None = None
+    ocpp_evse_nb: int | None = None
+    evse_id: str | None = None
 
     def next_poll(self) -> datetime:
         """Calculates the next moment a poll/post should occur."""
@@ -67,134 +82,110 @@ class ClientState:
     def new_instance(
         client: TrocaClient,
         db: DatabaseConnection,
-        connector_id: str,
+        connector_id: str | None,
         readings_poll_rate_seconds: int,
         schedule_poll_rate_seconds: int,
         metadata_poll_rate_seconds: int,
         ramp_step_seconds: int,
+        schedule_sync_mode: ScheduleSyncMode = DEFAULT_SCHEDULE_SYNC_MODE,
+        ocpp_connector_name: str | None = None,
+        ocpp_version: str | None = None,
+        ocpp_station_name: str | None = None,
+        ocpp_evse_nb: int | None = None,
+        evse_id: str | None = None,
     ) -> "ClientState":
         return ClientState(
             client=client,
             db=db,
             connector_id=connector_id,
-            readings_poll=Pollable(datetime.min, timedelta(seconds=readings_poll_rate_seconds)),
-            schedule_poll=Pollable(datetime.min, timedelta(seconds=schedule_poll_rate_seconds)),
-            metadata_poll=Pollable(datetime.min, timedelta(seconds=metadata_poll_rate_seconds)),
+            readings_poll=Pollable(POLL_EPOCH, timedelta(seconds=readings_poll_rate_seconds)),
+            schedule_poll=Pollable(POLL_EPOCH, timedelta(seconds=schedule_poll_rate_seconds)),
+            metadata_poll=Pollable(POLL_EPOCH, timedelta(seconds=metadata_poll_rate_seconds)),
             ramp_step=timedelta(seconds=ramp_step_seconds),
+            last_reading_at=datetime.now(UTC),
+            schedule_sync_mode=schedule_sync_mode,
+            ocpp_connector_name=ocpp_connector_name,
+            ocpp_version=ocpp_version,
+            ocpp_station_name=ocpp_station_name,
+            ocpp_evse_nb=ocpp_evse_nb,
+            evse_id=evse_id,
         )
 
 
-async def poll_readings(state: ClientState, session: AsyncSession, now: datetime) -> None:
-    """Takes a snapshot of OCPP readings via troca and pushes them into the DB"""
-    readings = await state.client.get_metering_data()
+async def resolve_ocpp_target(state: ClientState) -> OcppTarget | None:
+    """Works out where OCPP passthrough messages should be sent. Any of the connector name, OCPP version and
+    station name configured on state are used as is - the rest are discovered via the Troca API (the connector name
+    from state.connector_id, the OCPP version from the connector name and the station as the only station
+    registered with Troca)."""
 
-    await add_ocpp_readings(session, [reading_to_db(r) for r in readings])
-    state.readings_poll.last_poll = now
+    connector_name = state.ocpp_connector_name
+    if connector_name is None:
+        connectors = await state.client.get_connectors()
+        connector = next((c for c in connectors if c.connector_id == state.connector_id), None)
+        if connector is None or connector.connector_type != ConnectorType.Q_OCPP:
+            logger.error(f"Troca connector {state.connector_id} isn't a known OCPP connector.")
+            return None
+        connector_name = connector.name
 
-
-def _latest_charging_profile_command(commands: Iterable[SessionCommand]) -> SessionCommand | None:
-    """Finds the most recently received set/clear_charging_profile command out of a (potentially unordered,
-    per SessionCommand's docstring) batch. Used to check what Troca last actually applied before deciding
-    whether a new push is needed."""
-
-    profile_command_types = (SessionCommandType.SET_CHARGING_PROFILE, SessionCommandType.CLEAR_CHARGING_PROFILE)
-    relevant = [c for c in commands if c.type in profile_command_types]
-    if not relevant:
+    ocpp_version = state.ocpp_version or ocpp_version_from_connector_name(connector_name)
+    if ocpp_version is None:
+        logger.error(f"Unable to determine the OCPP version from connector name '{connector_name}'.")
         return None
-    return max(relevant, key=lambda c: c.received_at or c.created_at or "")
+
+    station_name = state.ocpp_station_name
+    if station_name is None:
+        stations = await state.client.get_stations()
+        if not stations:
+            logger.info("No charging stations registered with Troca.")
+            return None
+        if len(stations) > 1:
+            logger.warning(f"{len(stations)} Troca charging stations found - only {stations[0].name} will be used.")
+        station_name = stations[0].name
+
+    return OcppTarget(connector_name, ocpp_version, station_name)
 
 
-def _profile_already_applied(latest: SessionCommand | None, desired: ChargingProfile | None) -> bool:
-    """Checks whether the last accepted set/clear_charging_profile command already matches what we'd otherwise
-    push now - used to avoid needlessly resubmitting an identical profile every poll."""
+async def poll_readings(state: ClientState, session: AsyncSession, now: datetime) -> None:
+    """Takes a snapshot of any new OCPP readings via troca and pushes them into the DB"""
+    readings = [reading_to_db(r) for r in await state.client.get_metering_data()]
+    new_readings = [r for r in readings if r.reading_start > state.last_reading_at]
 
-    if latest is None or latest.status != CommandStatus.ACCEPTED:
-        return False
-
-    if desired is None:
-        return latest.type == SessionCommandType.CLEAR_CHARGING_PROFILE
-
-    if latest.type != SessionCommandType.SET_CHARGING_PROFILE or latest.input_parameters is None:
-        return False
-
-    try:
-        applied = ChargingProfile.from_dict(latest.input_parameters)
-    except Exception:
-        # SessionCommand's response shape is still under discovery (see its docstring) - if we can't parse it
-        # back into a ChargingProfile, just assume it doesn't match and let the caller re-push ours.
-        logger.warning("Could not parse the last SessionCommand's input_parameters as a ChargingProfile.")
-        return False
-
-    return applied.charging_schedule.charging_schedule_period == desired.charging_schedule.charging_schedule_period
-
-
-async def poll_schedules(state: ClientState, session: AsyncSession, now: datetime) -> None:
-    """Calculates the upcoming schedule of controls and maps it to a set of charging profiles. If those charging
-    profiles match the current troca profiles - this is a no-op, otherwise the existing set will be replaced/updated
-    with the newly calculated schedule"""
-    raw_schedule = await calculate_schedule_values(session, now)
-    if not raw_schedule:
-        logger.info("No scheduled control values available - nothing to enforce via Troca.")
-        state.schedule_poll.last_poll = now
-        return
-
-    # Only the immediately-current interval is mapped - see current_values_to_charging_profile's docstring for
-    # why the full future schedule isn't pre-loaded as a multi-period profile.
-    desired_profile = current_values_to_charging_profile(
-        raw_schedule[0].values, CHARGING_PROFILE_ID, CHARGING_PROFILE_STACK_LEVEL, now
-    )
-
-    commands = await state.client.get_session_commands()
-    latest_command = _latest_charging_profile_command(commands)
-
-    if _profile_already_applied(latest_command, desired_profile):
-        state.schedule_poll.last_poll = now
-        return
-
-    command_id = str(uuid4())
-
-    # NOTE: pool_id/station_id/evse_id are deliberately left unset below. ClientState/TrocaConfig only track a
-    # single connector_id (from GET /config/connectors) and there's no discovered mapping from that id to the
-    # pool/station/evse triplet set_charging_profile/clear_charging_profile actually take. This assumes a
-    # single-connector deployment where the server infers the sole target - revisit once that mapping (or
-    # multi-connector support) is clarified.
-    if desired_profile is None:
-        logger.info("Clearing Troca charging profile - no CSIP-Aus import limit currently active.")
-        await state.client.clear_charging_profile(command_id=command_id, charging_profile_id=CHARGING_PROFILE_ID)
-    else:
-        limit_watts = desired_profile.charging_schedule.charging_schedule_period[0].limit
-        logger.info(f"Pushing Troca charging profile with a {limit_watts}W import limit.")
-        await state.client.set_charging_profile(command_id=command_id, profile=desired_profile)
-
-    state.schedule_poll.last_poll = now
+    await add_ocpp_readings(session, new_readings)
+    if new_readings:
+        state.last_reading_at = max(r.reading_start for r in new_readings)
 
 
 async def poll_metadata(state: ClientState, session: AsyncSession, now: datetime) -> None:
-    """Fetches metadata from the current charging session and updates the DB with the latest values"""
-    sessions = await state.client.get_sessions()
-    active_sessions = [s for s in sessions if s.status not in INACTIVE_SESSION_STATUSES]
+    """Asks the charging station directly (via Troca's OCPP passthrough) for its rated power and updates the DB
+    with the latest values."""
 
-    if not active_sessions:
-        logger.info("No active Troca session - nothing to record for OCPP metadata.")
-        state.metadata_poll.last_poll = now
+    target = await resolve_ocpp_target(state)
+    if target is None:
         return
 
-    if len(active_sessions) > 1:
-        # Troca's get_sessions() has no way to filter by connector, and SessionData doesn't expose an id we can
-        # match against ClientState.connector_id (see poll_schedules' pool/station/evse note for the same gap).
-        # Best effort: pick whichever active session was updated most recently.
-        logger.warning(f"{len(active_sessions)} active Troca sessions found - using the most recently updated one.")
-
-    target_session = max(active_sessions, key=lambda s: s.last_updated or s.created_at or "")
-
-    metadata = session_constraints_to_metadata(target_session)
+    evse_nb = state.ocpp_evse_nb if state.ocpp_evse_nb is not None else DEFAULT_OCPP_EVSE_NB
+    results = await state.client.get_variables(target, rated_power_variables(evse_nb))
+    metadata = variables_to_metadata(results)
     if metadata is None:
-        logger.info(f"Session {target_session.session_id} has no usable charge/discharge constraints to record.")
-        state.metadata_poll.last_poll = now
+        logger.warning(f"Station {target.station_name} didn't report a usable rated power: {results}")
         return
 
     await upsert_ocpp_metadata(session, metadata)
-    state.metadata_poll.last_poll = now
+
+
+async def poll_schedules(state: ClientState, session: AsyncSession, now: datetime) -> None:
+    """Keeps the charging station's schedule in sync with the full upcoming schedule of CSIP-Aus controls, via
+    whichever mechanism state.schedule_sync_mode selects."""
+
+    if state.schedule_sync_mode == ScheduleSyncMode.TROCA_SESSION:
+        evse_location = None if state.evse_id is None else LocationId(state.evse_id, StructureLevel.EVSE)
+        await sync_session_schedule(state.client, session, now, evse_location)
+        return
+
+    target = await resolve_ocpp_target(state)
+    if target is None:
+        return
+    state.pushed_profile = await sync_ocpp_schedule(state.client, target, session, now, state.pushed_profile)
 
 
 def poll_required(pollable: Pollable, now: datetime) -> bool:
@@ -221,16 +212,7 @@ async def run_polls(state: ClientState, min_wait: timedelta = timedelta(seconds=
         finally:
             state.readings_poll.last_poll = now
 
-    if poll_required(state.schedule_poll, now):
-        try:
-            async with state.db.session_maker() as session:
-                await poll_schedules(state, session, now)
-                await session.commit()
-        except Exception:
-            logger.exception("Failed polling/pushing the Troca charging schedule.")
-        finally:
-            state.schedule_poll.last_poll = now
-
+    # Metadata before schedules - the schedule can't be built until the EVSE's rated power is known
     if poll_required(state.metadata_poll, now):
         try:
             async with state.db.session_maker() as session:
@@ -240,6 +222,16 @@ async def run_polls(state: ClientState, min_wait: timedelta = timedelta(seconds=
             logger.exception("Failed polling Troca session metadata.")
         finally:
             state.metadata_poll.last_poll = now
+
+    if poll_required(state.schedule_poll, now):
+        try:
+            async with state.db.session_maker() as session:
+                await poll_schedules(state, session, now)
+                await session.commit()
+        except Exception:
+            logger.exception("Failed polling/pushing the Troca charging schedule.")
+        finally:
+            state.schedule_poll.last_poll = now
 
     # Figure out our next call to this function
     return max(state.next_poll(), datetime.now(UTC) + min_wait)

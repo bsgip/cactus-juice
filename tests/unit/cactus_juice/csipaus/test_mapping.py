@@ -932,7 +932,7 @@ def test_csipaus_controls_to_responses_running_control():
     }
 
     for r in responses:
-        assert r.control is control
+        assert r.csipaus_control_id == control.csipaus_control_id
         assert r.end_device_lfdi == _EDEV_LFDI
         assert r.sent_at is None
 
@@ -1006,8 +1006,8 @@ def test_csipaus_controls_to_responses_multiple_controls_flattened_in_order():
     responses = csipaus_controls_to_responses([running, cancelled], _EDEV_LFDI)
 
     assert len(responses) == 6
-    assert all(r.control is running for r in responses[:3])
-    assert all(r.control is cancelled for r in responses[3:])
+    assert all(r.csipaus_control_id == running.csipaus_control_id for r in responses[:3])
+    assert all(r.csipaus_control_id == cancelled.csipaus_control_id for r in responses[3:])
     assert {r.response_status for r in responses[:3]} == {
         ResponseType.EVENT_RECEIVED,
         ResponseType.EVENT_STARTED,

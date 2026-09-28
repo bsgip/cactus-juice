@@ -1,5 +1,8 @@
 import { apiGet, apiSendJson } from './http'
 
+/** Mirrors cactus_juice.troca.models.ScheduleSyncMode */
+export type ScheduleSyncMode = 'ocpp' | 'troca_session'
+
 /** Mirrors cactus_juice.api.routers.troca.TrocaConfigResponse */
 export interface TrocaConfig {
   createdAt: string | null
@@ -11,6 +14,13 @@ export interface TrocaConfig {
   rampStepSeconds: number | null
   schedulePollRateSeconds: number | null
   metadataPollRateSeconds: number | null
+  scheduleSyncMode: ScheduleSyncMode | null
+  // Values that can be discovered via the Troca API - null means "discover on every poll"
+  ocppConnectorName: string | null
+  ocppVersion: string | null
+  ocppStationName: string | null
+  ocppEvseNb: number | null
+  evseId: string | null
 }
 
 /** Raw shape returned by the backend (snake_case, matches the FastAPI response model). */
@@ -24,6 +34,12 @@ interface TrocaConfigWire {
   ramp_step_seconds: number | null
   schedule_poll_rate_seconds: number | null
   metadata_poll_rate_seconds: number | null
+  schedule_sync_mode: ScheduleSyncMode | null
+  ocpp_connector_name: string | null
+  ocpp_version: string | null
+  ocpp_station_name: string | null
+  ocpp_evse_nb: number | null
+  evse_id: string | null
 }
 
 function fromWire(wire: TrocaConfigWire): TrocaConfig {
@@ -37,6 +53,12 @@ function fromWire(wire: TrocaConfigWire): TrocaConfig {
     rampStepSeconds: wire.ramp_step_seconds,
     schedulePollRateSeconds: wire.schedule_poll_rate_seconds,
     metadataPollRateSeconds: wire.metadata_poll_rate_seconds,
+    scheduleSyncMode: wire.schedule_sync_mode,
+    ocppConnectorName: wire.ocpp_connector_name,
+    ocppVersion: wire.ocpp_version,
+    ocppStationName: wire.ocpp_station_name,
+    ocppEvseNb: wire.ocpp_evse_nb,
+    evseId: wire.evse_id,
   }
 }
 
@@ -55,6 +77,18 @@ export interface TrocaConfigUpdate {
   rampStepSeconds: number
   schedulePollRateSeconds: number
   metadataPollRateSeconds: number
+  scheduleSyncMode: ScheduleSyncMode
+  ocppConnectorName: string
+  ocppVersion: string
+  ocppStationName: string
+  ocppEvseNb: number | null
+  evseId: string | null
+}
+
+/** Blank discoverable values mean "discover on every poll" - sent as null. */
+function blankToNull(value: string | null): string | null {
+  const trimmed = value?.trim() ?? ''
+  return trimmed ? trimmed : null
 }
 
 export async function updateTrocaConfig(values: TrocaConfigUpdate): Promise<TrocaConfig> {
@@ -68,6 +102,12 @@ export async function updateTrocaConfig(values: TrocaConfigUpdate): Promise<Troc
       ramp_step_seconds: values.rampStepSeconds,
       schedule_poll_rate_seconds: values.schedulePollRateSeconds,
       metadata_poll_rate_seconds: values.metadataPollRateSeconds,
+      schedule_sync_mode: values.scheduleSyncMode,
+      ocpp_connector_name: blankToNull(values.ocppConnectorName),
+      ocpp_version: blankToNull(values.ocppVersion),
+      ocpp_station_name: blankToNull(values.ocppStationName),
+      ocpp_evse_nb: values.ocppEvseNb,
+      evse_id: blankToNull(values.evseId),
     }),
   )
 }
@@ -77,6 +117,7 @@ export interface TrocaConnector {
   name: string
   connectorId: string
   connectorType: string
+  ocppVersion: string | null
   createdAt: string | null
   issuerId: string | null
   lastUpdated: string | null
@@ -87,6 +128,7 @@ interface TrocaConnectorWire {
   name: string
   connector_id: string
   connector_type: string
+  ocpp_version: string | null
   created_at: string | null
   issuer_id: string | null
   last_updated: string | null
@@ -98,6 +140,7 @@ function connectorFromWire(wire: TrocaConnectorWire): TrocaConnector {
     name: wire.name,
     connectorId: wire.connector_id,
     connectorType: wire.connector_type,
+    ocppVersion: wire.ocpp_version,
     createdAt: wire.created_at,
     issuerId: wire.issuer_id,
     lastUpdated: wire.last_updated,
@@ -105,9 +148,52 @@ function connectorFromWire(wire: TrocaConnectorWire): TrocaConnector {
   }
 }
 
-/** Enumerates connectors available on the configured Troca API - the backend errors if no TrocaConfig
- * is on record yet, so only call this once a config has been saved. */
-export async function fetchTrocaConnectors(): Promise<TrocaConnector[]> {
-  const wire = await apiGet<TrocaConnectorWire[]>('/api/troca-config/connectors')
-  return wire.map(connectorFromWire)
+/** Mirrors cactus_juice.api.routers.troca.TrocaStationResponse */
+export interface TrocaStation {
+  stationId: string
+  name: string
+  model: string | null
+  vendorId: string | null
+}
+
+/** Mirrors cactus_juice.api.routers.troca.TrocaEvseResponse */
+export interface TrocaEvse {
+  evseId: string
+  name: string | null
+  stationName: string | null
+  evseNb: number | null
+}
+
+/** Mirrors cactus_juice.api.routers.troca.TrocaDiscoveryResponse */
+export interface TrocaDiscovery {
+  connectors: TrocaConnector[]
+  stations: TrocaStation[]
+  evses: TrocaEvse[]
+}
+
+interface TrocaDiscoveryWire {
+  connectors: TrocaConnectorWire[]
+  stations: { station_id: string; name: string; model: string | null; vendor_id: string | null }[]
+  evses: { evse_id: string; name: string | null; station_name: string | null; evse_nb: number | null }[]
+}
+
+/** Enumerates everything on the configured Troca API that can fill out a TrocaConfig - the backend errors if no
+ * TrocaConfig is on record yet, so only call this once a config has been saved. */
+export async function fetchTrocaDiscovery(): Promise<TrocaDiscovery> {
+  const wire = await apiGet<TrocaDiscoveryWire>('/api/troca-config/discovery')
+  return {
+    connectors: wire.connectors.map(connectorFromWire),
+    stations: wire.stations.map((s) => ({
+      stationId: s.station_id,
+      name: s.name,
+      model: s.model,
+      vendorId: s.vendor_id,
+    })),
+    evses: wire.evses.map((e) => ({
+      evseId: e.evse_id,
+      name: e.name,
+      stationName: e.station_name,
+      evseNb: e.evse_nb,
+    })),
+  }
 }

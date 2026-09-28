@@ -226,7 +226,5 @@ async def get_telemetry_snapshot(session: AsyncSession = Depends(get_session)) -
             SatecReadingResponse.from_model(r, satec_labels_by_id.get(r.satec_config_id, f"Meter {r.satec_config_id}"))
             for r in satec_readings
         ],
-        task_health=[
-            TaskHealthResponse.from_model(name, task_health_by_name.get(name)) for name in sorted(TASKS)
-        ],
+        task_health=[TaskHealthResponse.from_model(name, task_health_by_name.get(name)) for name in sorted(TASKS)],
     )

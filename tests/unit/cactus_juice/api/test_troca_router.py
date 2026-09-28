@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from cactus_juice.api.deps import get_session
 from cactus_juice.main import create_app
 from cactus_juice.troca.client import TrocaApiError
-from cactus_juice.troca.models import Connector, ConnectorType
+from cactus_juice.troca.models import Connector, ConnectorType, Evse, EvseUid, Station
 
 
 @pytest.fixture
@@ -50,6 +50,12 @@ def test_get_troca_config_defaults_when_unset(client: TestClient):
     assert body["ramp_step_seconds"] is None
     assert body["schedule_poll_rate_seconds"] is None
     assert body["metadata_poll_rate_seconds"] is None
+    assert body["schedule_sync_mode"] is None
+    assert body["ocpp_connector_name"] is None
+    assert body["ocpp_version"] is None
+    assert body["ocpp_station_name"] is None
+    assert body["ocpp_evse_nb"] is None
+    assert body["evse_id"] is None
 
 
 def test_put_then_get_troca_config_round_trips(client: TestClient):
@@ -66,10 +72,22 @@ def test_put_then_get_troca_config_round_trips(client: TestClient):
             "ramp_step_seconds": 5,
             "schedule_poll_rate_seconds": 15,
             "metadata_poll_rate_seconds": 60,
+            "schedule_sync_mode": "troca_session",
+            "ocpp_connector_name": "qocppConnector2.1",
+            "ocpp_version": "2.1",
+            "ocpp_station_name": "FR*TRI*E123",
+            "ocpp_evse_nb": 1,
+            "evse_id": "evse-1",
         },
     )
     assert response.status_code == 200
     put_body = response.json()
+    assert put_body["schedule_sync_mode"] == "troca_session"
+    assert put_body["ocpp_connector_name"] == "qocppConnector2.1"
+    assert put_body["ocpp_version"] == "2.1"
+    assert put_body["ocpp_station_name"] == "FR*TRI*E123"
+    assert put_body["ocpp_evse_nb"] == 1
+    assert put_body["evse_id"] == "evse-1"
     assert put_body["base_url"] == "https://troca.example.com"
     assert put_body["basic_user"] == "user1"
     assert put_body["has_basic_password"] is True
@@ -97,6 +115,43 @@ def test_put_troca_config_defaults_polling_rates_when_omitted(client: TestClient
     assert body["ramp_step_seconds"] == 3
     assert body["schedule_poll_rate_seconds"] == 10
     assert body["metadata_poll_rate_seconds"] == 30
+    assert body["schedule_sync_mode"] == "ocpp"
+    assert body["ocpp_connector_name"] is None
+    assert body["ocpp_version"] is None
+    assert body["ocpp_station_name"] is None
+    assert body["ocpp_evse_nb"] is None
+    assert body["evse_id"] is None
+
+
+def test_put_troca_config_blank_discoverables_are_null(client: TestClient):
+    """Blank/whitespace discoverable values mean "discover it" - they're stored as NULL"""
+    response = client.put(
+        "/api/troca-config",
+        json={
+            "base_url": "https://troca.example.com",
+            "basic_user": "user1",
+            "basic_password": "secret",
+            "ocpp_connector_name": "",
+            "ocpp_version": "  ",
+            "ocpp_station_name": " FR*TRI*E123 ",
+            "evse_id": "",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ocpp_connector_name"] is None
+    assert body["ocpp_version"] is None
+    assert body["ocpp_station_name"] == "FR*TRI*E123"
+    assert body["evse_id"] is None
+
+
+@pytest.mark.parametrize("field, value", [("schedule_sync_mode", "bogus"), ("ocpp_evse_nb", -1)])
+def test_put_troca_config_invalid(client: TestClient, field: str, value):
+    response = client.put(
+        "/api/troca-config",
+        json={"base_url": "https://x", "basic_user": "u", "basic_password": "p", field: value},
+    )
+    assert response.status_code == 422
 
 
 def test_put_troca_config_without_password_preserves_existing_password(client: TestClient):
@@ -191,3 +246,52 @@ def test_get_connectors_propagates_api_errors(client: TestClient):
         response = client.get("/api/troca-config/connectors")
 
     assert response.status_code == 502
+
+
+def test_get_discovery_errors_without_config(client: TestClient):
+    assert client.get("/api/troca-config/discovery").status_code == 400
+
+
+def test_get_discovery_returns_configured_client_results(client: TestClient):
+    client.put(
+        "/api/troca-config",
+        json={"base_url": "https://troca.example.com", "basic_user": "user1", "basic_password": "secret"},
+    )
+
+    with mock.patch("cactus_juice.api.routers.troca.TrocaClient") as mock_client_cls:
+        mock_client = mock.AsyncMock()
+        mock_client.get_connectors.return_value = [
+            Connector(name="qocppConnector2.1", connector_id="conn-1", connector_type=ConnectorType.Q_OCPP),
+            Connector(name="emsConnector1.0", connector_id="conn-2", connector_type=ConnectorType.EMS),
+        ]
+        mock_client.get_stations.return_value = [Station(station_id="st-1", name="FR*TRI*E123", model="M")]
+        mock_client.get_evses.return_value = [
+            Evse(evse_id="evse-1", name="FR*TRI*E123*1", evse_uid=EvseUid(station_name="FR*TRI*E123", evse_nb=1)),
+            Evse(evse_id="evse-2"),
+        ]
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
+
+        response = client.get("/api/troca-config/discovery")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [(c["connector_id"], c["ocpp_version"]) for c in body["connectors"]] == [("conn-1", "2.1"), ("conn-2", None)]
+    assert body["stations"] == [{"station_id": "st-1", "name": "FR*TRI*E123", "model": "M", "vendor_id": None}]
+    assert body["evses"] == [
+        {"evse_id": "evse-1", "name": "FR*TRI*E123*1", "station_name": "FR*TRI*E123", "evse_nb": 1},
+        {"evse_id": "evse-2", "name": None, "station_name": None, "evse_nb": None},
+    ]
+
+
+def test_get_discovery_propagates_api_errors(client: TestClient):
+    client.put(
+        "/api/troca-config",
+        json={"base_url": "https://troca.example.com", "basic_user": "user1", "basic_password": "secret"},
+    )
+
+    with mock.patch("cactus_juice.api.routers.troca.TrocaClient") as mock_client_cls:
+        mock_client = mock.AsyncMock()
+        mock_client.get_stations.side_effect = TrocaApiError(500, "GET", "/structure/stations", "boom")
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
+
+        assert client.get("/api/troca-config/discovery").status_code == 502
