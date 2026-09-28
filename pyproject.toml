@@ -56,6 +56,8 @@ juice = "cactus_juice.cli:main"
 
 [project.optional-dependencies]
 dev = ["alembic", "bandit", "ty", "ruff", "codespell", "coverage", "pytest-cov", "python-dotenv[cli]", "lxml-stubs"]
+# Required to run DB migrations in a deployed environment (see deploy/docker/cactus-juice)
+migrate = ["alembic"]
 test = ["alembic", "pytest", "pytest-xdist", "pytest-postgresql", "pytest-asyncio", "pytest-aiohttp", "assertical", "freezegun", "psycopg"]
 
 [tool.setuptools.package-data]

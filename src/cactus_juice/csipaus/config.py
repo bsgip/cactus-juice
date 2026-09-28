@@ -1,5 +1,6 @@
 import hashlib
 import os
+import socket
 import ssl
 import tempfile
 import urllib.parse
@@ -10,6 +11,8 @@ from pathlib import Path
 from ssl import SSLContext
 
 from aiohttp import ClientSession, TCPConnector
+from aiohttp.abc import AbstractResolver, ResolveResult
+from aiohttp.resolver import DefaultResolver
 
 from cactus_juice.csipaus.sep2 import convert_lfdi_to_sfdi, lfdi_from_cert_bytes
 from cactus_juice.error import ConfigError
@@ -46,6 +49,52 @@ class CSIPAusContext:
     edev_sfdi: int  # The EndDevice SFDI that this client will manage. Same as client_sfdi for device client
 
     dcap_path: str  # The DeviceCapability path of the server - will be relative to base_uri in http.session
+
+
+class OverrideResolver(AbstractResolver):
+    """Resolves any host that is (or is a subdomain of) one of the overridden domains as though it were that domain's
+    target host instead - all other hosts resolve as normal. The hostname being requested is left untouched, so the
+    Host header and TLS SNI/hostname verification are unaffected - this is a wildcard-capable hosts file entry."""
+
+    def __init__(self, overrides: dict[str, str], inner: AbstractResolver | None = None) -> None:
+        # Longest domain first so that the most specific override wins if they overlap
+        self._overrides = sorted(
+            ((domain.lower().rstrip("."), target) for domain, target in overrides.items()),
+            key=lambda o: len(o[0]),
+            reverse=True,
+        )
+        self._inner = inner if inner is not None else DefaultResolver()
+
+    def target_for(self, host: str) -> str | None:
+        """Returns the override target for host (or None if host is not overridden)"""
+        host = host.lower().rstrip(".")
+        for domain, target in self._overrides:
+            if host == domain or host.endswith("." + domain):
+                return target
+        return None
+
+    async def resolve(
+        self, host: str, port: int = 0, family: socket.AddressFamily = socket.AF_INET
+    ) -> list[ResolveResult]:
+        target = self.target_for(host)
+        if target is None:
+            return await self._inner.resolve(host, port, family)
+
+        results = await self._inner.resolve(target, port, family)
+        return [
+            ResolveResult(
+                hostname=host,
+                host=r["host"],
+                port=r["port"],
+                family=r["family"],
+                proto=r["proto"],
+                flags=r["flags"],
+            )
+            for r in results
+        ]
+
+    async def close(self) -> None:
+        await self._inner.close()
 
 
 @contextmanager
@@ -103,10 +152,12 @@ def generate_aggregator_lfdi(nmi: str | None, pen: int) -> str:
     return hash.hexdigest().upper()[:32] + f"{pen:08}"
 
 
-def build_csipaus_context(config: CSIPAusConfig) -> CSIPAusContext:
+def build_csipaus_context(config: CSIPAusConfig, resolve_overrides: dict[str, str] | None = None) -> CSIPAusContext:
     """Builds a CSIPAusContext from the specified config entries. Raises ConfigError if there are issues / missing
     elements in the supplied config. Responsibility for cleaning up the allocated SSLContext falls to the caller of
-    this function."""
+    this function.
+
+    resolve_overrides: If set - host resolution for the server will be overridden as per OverrideResolver"""
 
     if config.dcap_uri is None:
         raise ConfigError("No dcap_uri is specified")
@@ -158,9 +209,11 @@ def build_csipaus_context(config: CSIPAusConfig) -> CSIPAusContext:
             + f"{len(config.certificate_pem)} cert file bytes and {len(config.key_pem)} key file bytes."
         ) from exc
 
+    resolver = OverrideResolver(resolve_overrides) if resolve_overrides else None
     return CSIPAusContext(
         HttpContext(
-            session=ClientSession(base_url=base_uri, connector=TCPConnector(ssl=ssl_context)), user_agent="cactus-juice"
+            session=ClientSession(base_url=base_uri, connector=TCPConnector(ssl=ssl_context, resolver=resolver)),
+            user_agent="cactus-juice",
         ),
         is_aggregator_client=config.is_aggregator,
         dcap_path=dcap_path,

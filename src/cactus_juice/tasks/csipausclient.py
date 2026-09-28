@@ -43,7 +43,10 @@ def _install_shutdown_handlers(loop: asyncio.AbstractEventLoop) -> tuple[asyncio
 
 
 async def _refresh_state(
-    db: DatabaseConnection, state: ClientState | None, active_config_id: int | None
+    db: DatabaseConnection,
+    state: ClientState | None,
+    active_config_id: int | None,
+    resolve_overrides: dict[str, str],
 ) -> tuple[ClientState | None, int | None]:
     """Checks the DB for the currently active CSIPAusConfig - builds and returns a new ClientState if its PK has
     changed since the last check (closing out the previous state's HTTP connection first), otherwise returns
@@ -63,7 +66,7 @@ async def _refresh_state(
 
         new_config_id = config.csipaus_config_id
         logger.info(f"Building new ClientState for CSIPAusConfig id={new_config_id}")
-        context = build_csipaus_context(config)
+        context = build_csipaus_context(config, resolve_overrides)
 
     if state is not None:
         await state.context.http.session.close()
@@ -111,7 +114,9 @@ async def run_csipaus_client_task(settings: CactusJuiceSettings) -> None:
         while not stop_event.is_set():
             try:
                 prior_state = state
-                state, active_config_id = await _refresh_state(db, state, active_config_id)
+                state, active_config_id = await _refresh_state(
+                    db, state, active_config_id, settings.juice_csipaus_resolve_overrides
+                )
                 if state is not prior_state:
                     next_poll_at = datetime.now(UTC)  # Force an immediate poll against the new state
 

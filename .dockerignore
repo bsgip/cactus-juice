@@ -1,0 +1,21 @@
+# Build context is the repo root for the images under deploy/docker/cactus-juice*
+# Keep secrets, local environments and build output out of the context
+.git
+**/.env
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+.vscode
+.claude
+.github
+tests
+Troca-API-HTTP_v1.0.0.yaml
+
+frontend/node_modules
+frontend/dist
+
+# deploy/ is only needed for the juice image support files
+deploy/pki
+deploy/server
+deploy/dev

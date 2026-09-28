@@ -255,6 +255,9 @@ dev = [
     { name = "ruff" },
     { name = "ty" },
 ]
+migrate = [
+    { name = "alembic" },
+]
 test = [
     { name = "alembic" },
     { name = "assertical" },
@@ -271,6 +274,7 @@ test = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3,<4" },
     { name = "alembic", marker = "extra == 'dev'" },
+    { name = "alembic", marker = "extra == 'migrate'" },
     { name = "alembic", marker = "extra == 'test'" },
     { name = "assertical", marker = "extra == 'test'" },
     { name = "asyncpg" },
@@ -302,7 +306,7 @@ requires-dist = [
     { name = "ty", marker = "extra == 'dev'" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.4" },
 ]
-provides-extras = ["dev", "test"]
+provides-extras = ["dev", "migrate", "test"]
 
 [[package]]
 name = "cactus-test-definitions"
