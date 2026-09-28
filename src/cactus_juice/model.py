@@ -331,6 +331,28 @@ class TrocaConfig(Base):
         Integer, server_default="30"
     )  # How often EVSE nameplate ratings should be polled
 
+    # How the CSIP-Aus schedule is kept in sync with the charging station (see cactus_juice.troca.models.
+    # ScheduleSyncMode) - "ocpp" (charging profiles sent directly via the OCPP passthrough) or "troca_session"
+    schedule_sync_mode: Mapped[str] = mapped_column(String, server_default="ocpp")
+
+    # Details that can all be discovered via the Troca API - when set, these are used as is (skipping discovery).
+    # When NULL, they are discovered on every poll that needs them.
+    ocpp_connector_name: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )  # Name of the Troca OCPP connector - first path segment of the OCPP passthrough, eg "qocppConnector2.1"
+    ocpp_version: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )  # OCPP version used on the OCPP passthrough, eg "2.1"
+    ocpp_station_name: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )  # OCPP charging station identity, eg "FR*TRI*E123"
+    ocpp_evse_nb: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )  # OCPP EVSE number (evseId) on the charging station, eg 1
+    evse_id: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )  # Troca's UUID for the EVSE - targeted by schedules in "troca_session" mode
+
 
 class TaskHealth(Base):
     """Tracks the liveness of a single background task (see cactus_juice.tasks) - each task upserts its own row

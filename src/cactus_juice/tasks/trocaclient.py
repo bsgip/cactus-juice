@@ -7,7 +7,8 @@ from cactus_juice.crud import fetch_troca_config, upsert_task_health
 from cactus_juice.db import DatabaseConnection
 from cactus_juice.settings import CactusJuiceSettings
 from cactus_juice.troca.client import TrocaClient
-from cactus_juice.troca.poll import ClientState, run_polls
+from cactus_juice.troca.models import ScheduleSyncMode
+from cactus_juice.troca.poll import DEFAULT_SCHEDULE_SYNC_MODE, ClientState, run_polls
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,16 @@ def _install_shutdown_handlers(loop: asyncio.AbstractEventLoop) -> tuple[asyncio
     return stop_event, registered
 
 
+def _parse_schedule_sync_mode(raw: str) -> ScheduleSyncMode:
+    """TrocaConfig.schedule_sync_mode is stored as a plain string - anything unrecognised falls back to the default
+    (with a warning) rather than preventing the task from running at all."""
+    try:
+        return ScheduleSyncMode(raw)
+    except ValueError:
+        logger.warning(f"Unrecognised schedule_sync_mode '{raw}' - using '{DEFAULT_SCHEDULE_SYNC_MODE}'.")
+        return DEFAULT_SCHEDULE_SYNC_MODE
+
+
 async def _refresh_state(
     db: DatabaseConnection, state: ClientState | None, active_config_id: int | None
 ) -> tuple[ClientState | None, int | None]:
@@ -62,8 +73,8 @@ async def _refresh_state(
             logger.warning("No TrocaConfig is currently registered - will check again shortly.")
             return state, active_config_id
 
-        if config.connector_id is None:
-            logger.warning("TrocaConfig has no connector_id configured yet - will check again shortly.")
+        if config.connector_id is None and config.ocpp_connector_name is None:
+            logger.warning("TrocaConfig has no connector_id/ocpp_connector_name configured yet - will check again.")
             return state, active_config_id
 
         if state is not None and config.troca_config_id == active_config_id:
@@ -80,6 +91,12 @@ async def _refresh_state(
             config.schedule_poll_rate_seconds,
             config.metadata_poll_rate_seconds,
             config.ramp_step_seconds,
+            _parse_schedule_sync_mode(config.schedule_sync_mode),
+            ocpp_connector_name=config.ocpp_connector_name,
+            ocpp_version=config.ocpp_version,
+            ocpp_station_name=config.ocpp_station_name,
+            ocpp_evse_nb=config.ocpp_evse_nb,
+            evse_id=config.evse_id,
         )
 
     if state is not None:

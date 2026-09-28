@@ -15,6 +15,8 @@ from .models import (
     GetVariableResult,
     LocationId,
     MeteringReading,
+    OcppChargingProfile,
+    OcppTarget,
     Pool,
     SessionCommand,
     SessionCommandLocation,
@@ -201,24 +203,35 @@ class TrocaClient:
 
     # -- OCPP passthrough ----------------------------------------------------
 
-    async def send_ocpp_command(
-        self, *, connector_name: str, ocpp_version: str, message_type: str, station_name: str, payload: dict[str, Any]
-    ) -> Any:  # noqa: ANN401
+    async def send_ocpp_command(self, target: OcppTarget, message_type: str, payload: dict[str, Any]) -> Any:  # noqa: ANN401
         """Sends an arbitrary OCPP request (payload) directly to a charging station via one of Troca's OCPP
         connectors, returning the station's raw OCPP response payload. The request must be wrapped in a "payload"
-        key or Troca rejects it with "No input for request" - this isn't in the spec."""
-        path = f"/{connector_name}/ocpp/{ocpp_version}/command/{message_type}/{station_name}"
+        key or Troca rejects it with "No input for request" - this isn't in the spec.
+
+        Only the station's direct response comes back - anything the station sends as a follow up message of its
+        own (eg ReportChargingProfiles in response to GetChargingProfiles, MeterValues) goes to Troca, not us."""
+        path = f"/{target.connector_name}/ocpp/{target.ocpp_version}/command/{message_type}/{target.station_name}"
         return await self._post(path, {"payload": payload})
 
-    async def get_variables(
-        self, *, connector_name: str, ocpp_version: str, station_name: str, requests: list[GetVariableData]
-    ) -> list[GetVariableResult]:
+    async def get_variables(self, target: OcppTarget, requests: list[GetVariableData]) -> list[GetVariableResult]:
         """OCPP 2.x GetVariables via the passthrough."""
         response = await self.send_ocpp_command(
-            connector_name=connector_name,
-            ocpp_version=ocpp_version,
-            message_type="GetVariables",
-            station_name=station_name,
-            payload={"getVariableData": [r.to_dict() for r in requests]},
+            target, "GetVariables", {"getVariableData": [r.to_dict() for r in requests]}
         )
         return [GetVariableResult.from_dict(r) for r in (response or {}).get("getVariableResult", [])]
+
+    async def set_charging_profile(self, target: OcppTarget, evse_id: int, profile: OcppChargingProfile) -> str:
+        """OCPP 2.x SetChargingProfile via the passthrough - returns the station's response status (eg Accepted).
+        A profile with the same id as an existing one replaces it."""
+        response = await self.send_ocpp_command(
+            target, "SetChargingProfile", {"evseId": evse_id, "chargingProfile": profile.to_dict()}
+        )
+        return (response or {}).get("status", "")
+
+    async def clear_charging_profile(self, target: OcppTarget, charging_profile_id: int) -> str:
+        """OCPP 2.x ClearChargingProfile via the passthrough - returns the station's response status. Note that
+        "Unknown" is returned if there was no such profile to clear."""
+        response = await self.send_ocpp_command(
+            target, "ClearChargingProfile", {"chargingProfileId": charging_profile_id}
+        )
+        return (response or {}).get("status", "")

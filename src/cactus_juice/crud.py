@@ -532,6 +532,12 @@ TROCA_CONFIG_VALUE_COLUMNS = (
     "ramp_step_seconds",
     "schedule_poll_rate_seconds",
     "metadata_poll_rate_seconds",
+    "schedule_sync_mode",
+    "ocpp_connector_name",
+    "ocpp_version",
+    "ocpp_station_name",
+    "ocpp_evse_nb",
+    "evse_id",
 )
 
 

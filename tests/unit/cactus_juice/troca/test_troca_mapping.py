@@ -7,12 +7,15 @@ from cactus_juice.csipaus.dto import ActiveValues, ScheduledControlValues
 from cactus_juice.troca.mapping import (
     MAX_SCHEDULE_PERIODS,
     SCHEDULE_HORIZON,
+    ocpp_profiles_match,
     rated_power_watts,
     reading_to_db,
+    schedule_to_ocpp_profile,
     schedule_to_troca,
     schedules_match,
     to_troca_timestamp,
     values_to_charge_watts,
+    values_to_ocpp_limits,
     variables_to_metadata,
 )
 from cactus_juice.troca.models import (
@@ -20,6 +23,10 @@ from cactus_juice.troca.models import (
     Bounds,
     GetVariableResult,
     MeteringReading,
+    OcppChargingProfile,
+    OcppChargingProfilePurpose,
+    OcppChargingSchedule,
+    OcppChargingSchedulePeriod,
     SchedulePeriod,
     SessionCommand,
     SessionData,
@@ -268,3 +275,141 @@ def test_reading_to_db(raw: dict, expected_import, expected_export, expected_vol
     assert r.import_active_power_watts == expected_import
     assert r.export_active_power_watts == expected_export
     assert r.voltage_volts == expected_voltage
+
+
+@pytest.mark.parametrize(
+    "v, expected",
+    [
+        (values(), (MAX_POWER, None)),
+        (values(import_limit_watts=7000), (7000, None)),
+        (values(import_limit_watts=7000, load_limit_watts=5000), (5000, None)),
+        (values(import_limit_watts=99000), (99000, None)),  # Unlike setpoints, limits don't need capping
+        (values(import_limit_watts=-10), (0, None)),
+        (values(export_limit_watts=2000), (MAX_POWER, -2000)),
+        (values(export_limit_watts=2000, generation_limit_watts=1500), (MAX_POWER, -1500)),
+        (values(export_limit_watts=0), (MAX_POWER, 0)),
+        (values(import_limit_watts=7000, export_limit_watts=2000, connect=False), (0, 0)),
+        (values(energize=False), (0, 0)),
+    ],
+)
+def test_values_to_ocpp_limits(v: ActiveValues, expected: tuple):
+    assert values_to_ocpp_limits(v, MAX_POWER) == expected
+
+
+def test_schedule_to_ocpp_profile():
+    raw = [
+        scv(0, 10, values(import_limit_watts=7000, export_limit_watts=2000)),
+        scv(10, 20, values(import_limit_watts=7000, export_limit_watts=2000, storage_target_watts=5)),  # merges
+        scv(20, 30, values(connect=False)),
+        scv(30, None, values()),
+    ]
+
+    profile = schedule_to_ocpp_profile(
+        raw,
+        MAX_POWER,
+        NOW + timedelta(microseconds=500),
+        9001,
+        0,
+        OcppChargingProfilePurpose.CHARGING_STATION_MAX_PROFILE,
+    )
+
+    assert profile is not None
+    # Same shape as the SetChargingProfile payload the station accepted (2026-09-28)
+    assert profile.to_dict() == {
+        "id": 9001,
+        "stackLevel": 0,
+        "chargingProfilePurpose": "ChargingStationMaxProfile",
+        "chargingProfileKind": "Absolute",
+        "chargingSchedule": [
+            {
+                "id": 1,
+                "chargingRateUnit": "W",
+                "startSchedule": "2026-09-28T04:00:00Z",
+                "duration": int(SCHEDULE_HORIZON.total_seconds()),
+                "chargingSchedulePeriod": [
+                    {"startPeriod": 0, "limit": 7000.0, "dischargeLimit": -2000.0},
+                    {"startPeriod": 1200, "limit": 0.0, "dischargeLimit": 0.0},
+                    {"startPeriod": 1800, "limit": MAX_POWER},
+                ],
+            }
+        ],
+    }
+
+
+def test_schedule_to_ocpp_profile_empty_and_truncated():
+    purpose = OcppChargingProfilePurpose.CHARGING_STATION_MAX_PROFILE
+    assert schedule_to_ocpp_profile([], MAX_POWER, NOW, 1, 0, purpose) is None
+
+    raw = [scv(i, i + 1, values(import_limit_watts=1000 * (i % 2))) for i in range(MAX_SCHEDULE_PERIODS + 10)]
+    profile = schedule_to_ocpp_profile(raw, MAX_POWER, NOW, 1, 0, purpose)
+    assert profile is not None
+    assert len(profile.charging_schedule[0].charging_schedule_period) == MAX_SCHEDULE_PERIODS
+    assert profile.charging_schedule[0].duration == MAX_SCHEDULE_PERIODS * 60
+
+
+def _profile(start_mins: int, *periods: tuple[int, float, float | None], duration_mins: int) -> OcppChargingProfile:
+    return OcppChargingProfile(
+        id=1,
+        stack_level=0,
+        charging_profile_purpose=OcppChargingProfilePurpose.CHARGING_STATION_MAX_PROFILE,
+        charging_profile_kind="Absolute",
+        charging_schedule=[
+            OcppChargingSchedule(
+                id=1,
+                charging_rate_unit="W",
+                start_schedule=to_troca_timestamp(NOW + timedelta(minutes=start_mins)),
+                duration=duration_mins * 60,
+                charging_schedule_period=[
+                    OcppChargingSchedulePeriod(start_period=s * 60, limit=lim, discharge_limit=dis)
+                    for s, lim, dis in periods
+                ],
+            )
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    "applied, desired, expected",
+    [
+        (
+            _profile(0, (0, 7000, None), (10, 0, 0), duration_mins=YEAR),
+            _profile(0, (0, 7000, None), (10, 0, 0), duration_mins=YEAR),
+            True,
+        ),
+        # Pushed 5 mins earlier - equivalent from now onwards
+        (
+            _profile(-5, (0, 7000, None), (15, 0, 0), duration_mins=YEAR - 5),
+            _profile(0, (0, 7000, None), (10, 0, 0), duration_mins=YEAR),
+            True,
+        ),
+        # Split vs merged periods are equivalent
+        (
+            _profile(0, (0, 7000, None), (5, 7000, None), (10, 0, 0), duration_mins=YEAR),
+            _profile(0, (0, 7000, None), (10, 0, 0), duration_mins=YEAR),
+            True,
+        ),
+        (
+            _profile(0, (0, 7000, None), (10, 0, 0), duration_mins=YEAR),
+            _profile(0, (0, 7000, -1), (10, 0, 0), duration_mins=YEAR),
+            False,
+        ),
+        (
+            _profile(0, (0, 7000, None), (10, 0, 0), duration_mins=YEAR),
+            _profile(0, (0, 6000, None), (10, 0, 0), duration_mins=YEAR),
+            False,
+        ),
+        (
+            _profile(0, (0, 7000, None), (10, 0, 0), duration_mins=YEAR),
+            _profile(0, (0, 7000, None), (11, 0, 0), duration_mins=YEAR),
+            False,
+        ),
+        # Applied is running out of horizon
+        (
+            _profile(0, (0, 7000, None), (10, 0, 0), duration_mins=YEAR // 3),
+            _profile(0, (0, 7000, None), (10, 0, 0), duration_mins=YEAR),
+            False,
+        ),
+    ],
+)
+def test_ocpp_profiles_match(applied: OcppChargingProfile, desired: OcppChargingProfile, expected: bool):
+    assert ocpp_profiles_match(applied, desired, NOW) is expected

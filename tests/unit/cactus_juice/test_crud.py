@@ -1611,6 +1611,26 @@ async def test_fetch_troca_config(pg_base_config):
     assert actual.ramp_step_seconds == 3
     assert actual.schedule_poll_rate_seconds == 10
     assert actual.metadata_poll_rate_seconds == 30
+    assert actual.schedule_sync_mode == "troca_session"
+    assert actual.ocpp_connector_name == "qocppConnector2.1"
+    assert actual.ocpp_version == "2.1"
+    assert actual.ocpp_station_name == "FR*TRI*E123"
+    assert actual.ocpp_evse_nb == 1
+    assert actual.evse_id == "evse-2"
+
+
+async def test_fetch_troca_config_defaults(pg_base_config):
+    """The new discovery columns default to NULL (ie discover) and the sync mode to "ocpp"."""
+    async with generate_async_session(pg_base_config) as session:
+        row = await session.get(TrocaConfig, 1)
+
+    assert row is not None
+    assert row.schedule_sync_mode == "ocpp"
+    assert row.ocpp_connector_name is None
+    assert row.ocpp_version is None
+    assert row.ocpp_station_name is None
+    assert row.ocpp_evse_nb is None
+    assert row.evse_id is None
 
 
 async def test_fetch_troca_config_empty(pg_empty_config):

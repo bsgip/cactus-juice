@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -69,6 +70,16 @@ class StructureLevel(StrEnum):
     EVSE_CONNECTOR = "evseConnector"
     ALL = "all"
     UNKNOWN = "unknown"
+
+
+class ScheduleSyncMode(StrEnum):
+    """How the CSIP-Aus schedule is kept in sync with the charging station (persisted on TrocaConfig)."""
+
+    # Send OCPP charging profiles directly to the station via Troca's OCPP passthrough (see troca.ocpp_schedule)
+    OCPP = "ocpp"
+
+    # Send schedules via Troca's own session command API (see troca.session_schedule)
+    TROCA_SESSION = "troca_session"
 
 
 class ValueType(StrEnum):
@@ -444,3 +455,60 @@ class GetVariableResult(TrocaModel):
     @property
     def accepted(self) -> bool:
         return self.attribute_status == "Accepted"
+
+
+# Pulls the OCPP version off the end of an OCPP connector's name, eg "qocppConnector2.1" -> "2.1"
+OCPP_VERSION_PATTERN = re.compile(r"(\d+(?:\.\d+)+)$")
+
+
+def ocpp_version_from_connector_name(name: str) -> str | None:
+    """Troca's OCPP connectors are named for the OCPP version they speak, eg "qocppConnector2.1" -> "2.1"."""
+    match = OCPP_VERSION_PATTERN.search(name)
+    return None if match is None else match.group(1)
+
+
+@dataclass(frozen=True)
+class OcppTarget:
+    """Identifies where OCPP passthrough messages are sent - POST /{connector_name}/ocpp/{ocpp_version}/command/
+    {messageType}/{station_name}"""
+
+    connector_name: str  # The Troca connector's name, eg "qocppConnector2.1"
+    ocpp_version: str  # eg "2.1"
+    station_name: str  # The OCPP charging station identity, eg "FR*TRI*E123"
+
+
+class OcppChargingProfilePurpose(StrEnum):
+    CHARGING_STATION_MAX_PROFILE = "ChargingStationMaxProfile"
+    TX_DEFAULT_PROFILE = "TxDefaultProfile"
+    TX_PROFILE = "TxProfile"
+
+
+@dataclass(frozen=True)
+class OcppChargingSchedulePeriod(TrocaModel):
+    """OCPP 2.1 ``ChargingSchedulePeriodType`` (subset). ``discharge_limit`` is <= 0 (OCPP 2.1 only)."""
+
+    start_period: int = field(metadata={"alias": "startPeriod"})
+    limit: float | None = None
+    discharge_limit: float | None = field(default=None, metadata={"alias": "dischargeLimit"})
+
+
+@dataclass(frozen=True)
+class OcppChargingSchedule(TrocaModel):
+    """OCPP 2.x ``ChargingScheduleType`` (subset)."""
+
+    id: int
+    charging_rate_unit: str = field(metadata={"alias": "chargingRateUnit"})
+    charging_schedule_period: list[OcppChargingSchedulePeriod] = field(metadata={"alias": "chargingSchedulePeriod"})
+    start_schedule: str | None = field(default=None, metadata={"alias": "startSchedule"})
+    duration: int | None = None
+
+
+@dataclass(frozen=True)
+class OcppChargingProfile(TrocaModel):
+    """OCPP 2.x ``ChargingProfileType`` (subset)."""
+
+    id: int
+    stack_level: int = field(metadata={"alias": "stackLevel"})
+    charging_profile_purpose: OcppChargingProfilePurpose = field(metadata={"alias": "chargingProfilePurpose"})
+    charging_profile_kind: str = field(metadata={"alias": "chargingProfileKind"})
+    charging_schedule: list[OcppChargingSchedule] = field(metadata={"alias": "chargingSchedule"})

@@ -194,8 +194,8 @@ VALUES ('2026-01-01T00:05:00Z', TRUE, NULL, NULL, NULL, NULL, NULL, NULL, TRUE, 
 --  2   00:10  <- latest (current)
 INSERT INTO troca_config (created_at, base_url, basic_user, basic_password, connector_id)
 VALUES ('2026-01-01T00:00:00Z', 'https://example.com/1', 'u1', 'p1', NULL);
-INSERT INTO troca_config (created_at, base_url, basic_user, basic_password, connector_id)
-VALUES ('2026-01-01T00:10:00Z', 'https://example.com/2', 'u2', 'p2', 'c2');
+INSERT INTO troca_config (created_at, base_url, basic_user, basic_password, connector_id, schedule_sync_mode, ocpp_connector_name, ocpp_version, ocpp_station_name, ocpp_evse_nb, evse_id)
+VALUES ('2026-01-01T00:10:00Z', 'https://example.com/2', 'u2', 'p2', 'c2', 'troca_session', 'qocppConnector2.1', '2.1', 'FR*TRI*E123', 1, 'evse-2');
 INSERT INTO troca_config (created_at, base_url, basic_user, basic_password, connector_id)
 VALUES ('2026-01-01T00:05:00Z', 'https://example.com/3', 'u3', 'p3', 'c3');
 
