@@ -1,0 +1,68 @@
+{
+    "version": 1,
+    "disable_existing_loggers": false,
+    "filters": {
+        "no_errors": {
+            "()": "cactus_runner.app.log.NonErrorFilter"
+        }
+    },
+    "formatters": {
+        "standard": {
+            "format": "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
+        },
+        "jsonl": {
+            "()": "cactus_runner.app.log.JSONLFormatter",
+            "fmt_keys": {
+                "level": "levelname",
+                "message": "message",
+                "timestamp": "timestamp",
+                "logger": "name",
+                "module": "module",
+                "function": "funcName",
+                "line": "lineno",
+                "thread_name": "threadName"
+            }
+        }
+    },
+    "handlers": {
+        "stdout": {
+            "class": "logging.StreamHandler",
+            "filters": [
+                "no_errors"
+            ],
+            "formatter": "standard",
+            "stream": "ext://sys.stdout"
+        },
+        "stderr": {
+            "class": "logging.StreamHandler",
+            "level": "WARNING",
+            "formatter": "standard",
+            "stream": "ext://sys.stderr"
+        },
+        "sharefile": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "level": "INFO",
+            "formatter": "standard",
+            "filename": "/shared/cactus_runner.log",
+            "maxBytes": 10000000,
+            "backupCount": 3
+        },
+        "queue_handler": {
+            "class": "logging.handlers.QueueHandler",
+            "handlers": [
+                "stdout",
+                "stderr",
+                "sharefile"
+            ],
+            "respect_handler_level": true
+        }
+    },
+    "loggers": {
+        "root": {
+            "level": "DEBUG",
+            "handlers": [
+                "queue_handler"
+            ]
+        }
+    }
+}

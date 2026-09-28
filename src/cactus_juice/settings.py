@@ -14,6 +14,13 @@ class CactusJuiceSettings(BaseSettings):
     # Origins allowed to call the JSON API (eg the vite dev server)
     juice_cors_origins: list[str] = ["http://localhost:5173"]
 
+    # csipausclient
+    # Maps a domain to an alternate host/IP that should be connected to instead (applies to that domain AND all of its
+    # subdomains) - a wildcard-capable equivalent of a hosts file entry. The original hostname is still used for the
+    # Host header and TLS SNI/verification. eg: {"cactus.example.com": "10.89.100.1"} to route all CSIP-Aus traffic
+    # for run-123.cactus.example.com to an nginx instance on the container host.
+    juice_csipaus_resolve_overrides: dict[str, str] = {}
+
     @classmethod
     def settings_customise_sources(
         cls,
