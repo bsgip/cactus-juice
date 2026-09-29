@@ -68,3 +68,11 @@ cd frontend/
 npm build
 npm run dev
 ```
+
+Tasks:
+
+```
+uv run dotenv run juice task csipausclient
+uv run dotenv run juice task trocaclient
+uv run dotenv run juice task satecclient
+```
