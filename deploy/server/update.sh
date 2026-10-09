@@ -1,5 +1,5 @@
 #!/bin/bash
-# Deploy/update core Cactus containers (orchestrator, UI, client-notifications).
+# Deploy/update core Cactus containers (orchestrator, UI).
 # Teststack containers are managed at runtime by the orchestrator via the Podman socket.
 # Run as root.
 # Usage: sudo ./update.sh ./cactus.env
@@ -44,7 +44,6 @@ done
 echo "==> Pulling images..."
 podman pull "$CACTUS_ORCHESTRATOR_IMAGE"
 podman pull "$CACTUS_UI_IMAGE"
-podman pull "$CACTUS_CLIENT_NOTIFICATIONS_IMAGE"
 
 # --------------------------------------------------------------------------- #
 # Database migration check                                                     #
@@ -245,22 +244,6 @@ podman run -d \
     --log-driver=journald \
     --log-opt=tag=cactus-ui \
     "$CACTUS_UI_IMAGE"
-
-# --------------------------------------------------------------------------- #
-# cactus-client-notifications                                                  #
-# --------------------------------------------------------------------------- #
-echo "==> Deploying cactus-client-notifications..."
-podman rm -f cactus-client-notifications 2>/dev/null || true
-podman run -d \
-    --name cactus-client-notifications \
-    --restart always \
-    --network cactus-net \
-    -p 127.0.0.1:5002:8080 \
-    -e SERVER_URL="${CACTUS_CLIENT_NOTIFICATIONS_SERVER_URL}" \
-    -e MOUNT_POINT="${CACTUS_CLIENT_NOTIFICATIONS_MOUNT_POINT}" \
-    --log-driver=journald \
-    --log-opt=tag=cactus-client-notifications \
-    "$CACTUS_CLIENT_NOTIFICATIONS_IMAGE"
 
 echo ""
 echo "==> Update complete.  Running containers:"
