@@ -41,9 +41,29 @@ done
 # --------------------------------------------------------------------------- #
 # Pull latest images                                                           #
 # --------------------------------------------------------------------------- #
+# Images from the localhost/ "registry" are built on this host (podman's default name for local builds) so they
+# can't be pulled - they must already exist.
+is_local_image() {
+    [[ "$1" == localhost/* ]]
+}
+
+# Pulls an image, unless it's a localhost/ image (in which case it's only checked for existence)
+pull_image() {
+    local image="$1"
+    if is_local_image "$image"; then
+        if ! podman image exists "$image"; then
+            echo "ERROR: local image ${image} does not exist on this host (localhost/ images are never pulled)." >&2
+            exit 1
+        fi
+        echo "Local image, skipping pull: ${image}"
+        return
+    fi
+    podman pull "$image"
+}
+
 echo "==> Pulling images..."
-podman pull "$CACTUS_ORCHESTRATOR_IMAGE"
-podman pull "$CACTUS_UI_IMAGE"
+pull_image "$CACTUS_ORCHESTRATOR_IMAGE"
+pull_image "$CACTUS_UI_IMAGE"
 
 # --------------------------------------------------------------------------- #
 # Database migration check                                                     #
@@ -102,7 +122,7 @@ fi
 # Enumerate every CACTUS_IMAGE__* env var and pull each one's value as a
 # podman image, skipping any that already exist locally. Variables whose
 # NAME ends with __CSIP_AUS_VERSION are skipped entirely - they're version
-# labels, not image references.
+# labels, not image references. localhost/ images are never pulled (see pull_image).
  
 pulled=0
 already_present=0
@@ -120,7 +140,7 @@ for var_name in "${!CACTUS_IMAGE__@}"; do
         already_present=$((already_present + 1))
     else
         echo "Pulling: ${image} (${var_name})"
-        podman pull "$image"
+        pull_image "$image"
         pulled=$((pulled + 1))
     fi
 done
