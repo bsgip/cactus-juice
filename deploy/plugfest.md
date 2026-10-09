@@ -6,7 +6,7 @@ As root:
 ```
 
 apt update
-apt install postgresql-18 nginx git curl vim
+apt install postgresql-18 nginx git curl vim podman aardvark-dns netavark catatonit
 ```
 
 ## Setup CACTUS Account
@@ -68,5 +68,47 @@ uv sync --all-extras
 uv run dotenv run alembic upgrade head
 ```
 
+## ENV file
 
-## Do the normal CACTUS setup.sh
+As cactus:
+```
+cp ~/cactus-juice/deploy/sample.cactus.env ~/cactus-juice/deploy/cactus.env
+vim ~/cactus-juice/deploy/cactus.env
+```
+
+## PKI
+
+As root:
+```
+cd ~/cactus-juice/deploy/pki
+source ../server/cactus.env
+./create-cert.sh device     serca 1 device-chain     1
+./create-cert.sh aggregator serca 1 aggregator-chain 2
+./create-cert.sh dnsp       serca 1 dnsp-chain       3 envoy 1 "*.${CACTUS_FQDN}"
+./stage-certs.sh . ../server/cactus.env
+```
+
+## Run setup scripts
+
+As root:
+```
+cd ~/cactus-juice/deploy/server
+./setup.sh
+./setup-juice.sh
+```
+
+## Build orchestrator image
+
+As cactus:
+```
+cd ~/cactus-juice
+podman build -t cactus-orchestrator:plugfest_latest --build-arg CACTUS_ORCHESTRATOR_VERSION="plugfest" --build-arg GITHUB_ORG="bsgip" "./deploy/docker/cactus-orchestrator"
+```
+
+## Start services
+As cactus:
+```
+cd ~/cactus-juice/deploy/server
+./update.sh
+./update-juice.sh
+```
