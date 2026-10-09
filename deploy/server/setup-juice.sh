@@ -118,5 +118,7 @@ echo "==> cactus-juice setup complete."
 echo ""
 echo "Next steps:"
 echo "  1. Render + enable the nginx vhost: ./nginx-config.sh juice ${ENV_FILE} > /etc/nginx/sites-available/${JUICE_FQDN:-<JUICE_FQDN>}"
-echo "     and issue a certificate for ${JUICE_FQDN:-<JUICE_FQDN>} (see README.md)"
+if [[ "${UI_TLS_MODE:-letsencrypt}" != "none" ]]; then
+    echo "     and issue a certificate for ${JUICE_FQDN:-<JUICE_FQDN>} (see README.md)"
+fi
 echo "  2. Build + deploy the containers: ./update-juice.sh ${ENV_FILE}"

@@ -1,0 +1,138 @@
+@startuml cactus-juice-troca-scenario-v2
+
+title CACTUS-Juice driving an OCPP 2.1 V2G charger through Troca (v2)
+
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+skinparam noteFontSize 11
+autonumber "<b>[00]"
+
+participant "CACTUS-Juice\n" as CJ
+participant "Troca" as TR
+participant "Charging Station\n(OCPP 2.1, V2X)" as CS
+participant "EV\n(ISO 15118-20 BPT)" as EV
+
+== 0. Setup before the demo (once per station) ==
+
+CJ -> TR : GET /structure/evses, /structure/evse-connectors,\n/observation-points/locations
+TR --> CJ : 200 [evse ids, evseConnectorUid (station, evse, connector),\nobservation point of each EVSE]
+
+CJ -> TR : POST /qocppConnector2.1/ocpp/2.1/command/GetVariables/{station}\n{payload: ISO15118Ctrlr.Enabled, V2XChargingCtrlr.Enabled,\nV2XChargingCtrlr.SupportedOperationModes, V2XChargingCtrlr.SupportedEnergyTransferModes,\nEVSE.Power, EVSE.SupplyPhases}
+TR -> CS : GetVariablesRequest (forwarded unchanged)
+CS --> TR : GetVariablesResponse
+TR --> CJ : 200 {station's GetVariablesResponse}
+
+
+CJ -> TR : POST /qocppConnector2.1/ocpp/2.1/command/SetVariables/{station}\n{payload: SampledDataCtrlr.TxUpdatedMeasurands = Energy.Active.Import.Register,\nEnergy.Active.Export.Register, Power.Active.Import/Export, Power.Active.Setpoint,\nVoltage, Current.Import/Export, SoC; TxUpdatedInterval = 10;\nAlignedDataCtrlr.Measurands/Interval for readings without a session}
+TR -> CS : SetVariablesRequest (forwarded unchanged)
+CS --> TR : SetVariablesResponse [Accepted...]
+TR --> CJ : 200 {station's SetVariablesResponse}\n(passthrough: synchronous, nothing recorded)
+
+== 1. EV plugs in: charge-only start (automatic, no CACTUS-Juice action) ==
+
+hnote over CS : EV plugged in
+CS ->> TR : NotifyEventRequest(Connector.AvailabilityState = Occupied)
+TR -->> CS : NotifyEventResponse
+CS ->> TR : TransactionEventRequest(Started, triggerReason = CablePluggedIn,\nchargingState = EVConnected, evse 1, transactionId)
+TR -->> CS : TransactionEventResponse
+CS ->> TR : AuthorizeRequest(idToken + EVCCID in additionalInfo, ...)
+TR -->> CS : AuthorizeResponse(idTokenInfo.status = Accepted)
+CS ->> TR : TransactionEventRequest(Updated, triggerReason = Authorized, idToken)
+TR -->> CS : TransactionEventResponse
+
+CS ->> TR : NotifyEVChargingNeedsRequest(requestedEnergyTransfer = DC,\navailableEnergyTransfer = [DC, DC_BPT], controlMode, v2xChargingParameters, ...)
+TR -->> CS : NotifyEVChargingNeedsResponse(Accepted)
+
+TR -> TR : store needs on the session\n(physical-constraints, ev-user-preferences,\nelectrical-characteristics, control-settings)
+hnote over CS : charging, no charging profile\n(EVSE max power)
+
+par meter readings, for the whole session
+  CS ->> TR : TransactionEventRequest(Updated, chargingState = Charging,\nmeterValue[Power, Voltage, Current, Energy Import/Export, Setpoint, SoC])\nor MeterValuesRequest
+  TR -->> CS : Response
+  TR -> TR : store on the EVSE's observation point\n(+ chargedEnergy / soc on the session)
+end
+
+== 2. CACTUS-Juice enables V2X and sends the first plan ==
+
+loop every Y s until the session appears
+  CJ -> TR : GET /sessions/status
+  TR --> CJ : 200 [{sessionId, status: charging, timestamp}]
+end
+
+CJ -> TR : GET /sessions?sessionId=...
+TR --> CJ : 200 [{sessionId, location (evseConnector), transactionId, userToken, ...}]
+
+CJ -> TR : POST /qocppConnector2.1/ocpp/2.1/command/NotifyAllowedEnergyTransfer/{station}\n{payload: {transactionId, allowedEnergyTransfer: [DC, DC_BPT]}}
+TR -> CS : NotifyAllowedEnergyTransferRequest (forwarded unchanged)
+CS --> TR : NotifyAllowedEnergyTransferResponse(Accepted)
+TR --> CJ : 200 {station's answer}
+
+hnote over CS : renegotiates the service with the EV (DC_BPT)
+CS ->> TR : NotifyEVChargingNeedsRequest(requestedEnergyTransfer = DC_BPT,\navailableEnergyTransfer, controlMode, v2xChargingParameters{maxChargePower,\nmaxDischargePower, ...}, departureTime, evEnergyOffer)
+TR -->> CS : NotifyEVChargingNeedsResponse(Accepted)
+TR -> TR : store the session's needs
+
+loop until bidirectional = true 
+  CJ -> TR : GET /sessions/electrical-characteristics?sessionId=...
+  TR --> CJ : 200 [{bidirectional, powerType, amperage}]
+end
+
+CJ -> TR : GET /sessions/physical-constraints?sessionId=...\n+ /sessions/ev-user-preferences?sessionId=...
+TR --> CJ : 200 [EV range: global.min = -maxCharge, global.max = +maxDischarge (kW);\ndepartureTime, energyRequirements, socRequirements]
+
+CJ -> TR : POST /sessions/commands [{commandId, type: set_charging_profile, schedule...}]\n+ POST /sessions/commands/locations [{commandId, locationId: evseId}]
+TR --> CJ : 200
+TR -> CS : SetChargingProfileRequest(evseId, TxProfile, id 1, transactionId,\nAbsolute, W, periods[operationMode = CentralSetpoint, setpoint, limit / dischargeLimit])
+CS --> TR : SetChargingProfileResponse(Accepted)
+hnote over CS : V2X active
+
+== 3. Loop "Syncing schedules" (every X s) ==
+
+loop every X seconds
+  CJ -> TR : GET /core/applied-charging-profiles\n(rows filtered on locationId = {evseId}, level evse)
+  TR --> CJ : 200 - one row per period the station ACCEPTED [\nstartTime, endTime, setpoint (kW, plan sign), operationMode,\ndischargeLimit, global.max, customData.clientCommandId]
+  CJ -> CJ : compare with CACTUS schedule
+
+  alt no differences
+    note over CJ : nothing to send
+  else differences: send CURRENT + upcoming as one plan
+    CJ -> TR : POST /sessions/commands\n[{commandId: uuid, type: set_charging_profile}]
+    TR --> CJ : 200 (stored, nothing sent yet)
+    CJ -> TR : POST /sessions/commands/locations\n[{commandId, locationId: {locationId: evseId, level: evse}}]
+    TR --> CJ : 200 (triggers the send)
+
+    TR -> CS : SetChargingProfileRequest(evseId, TxProfile, id 1, transactionId, Absolute, W,\nperiods[operationMode = CentralSetpoint, setpoint])
+    CS --> TR : SetChargingProfileResponse(Accepted)
+    TR -> TR : record applied charging profile (clientCommandId),\ncommand -> accepted
+
+    loop until status is not pending
+      CJ -> TR : GET /sessions/commands/status?commandId=...
+      TR --> CJ : 200 [{commandId, status: pending | accepted | refused | error, timestamp}]
+    end
+  end
+end
+
+== 4. Loop "Syncing metadata / readings" (every Y s) ==
+
+loop every Y seconds
+  CJ -> TR : GET /sessions/status
+  TR --> CJ : 200 [{sessionId, status: charging | completed, timestamp}]
+  CJ -> TR : GET /sessions/operational-data?sessionId=...
+  TR --> CJ : 200 [{sessionId, timestamp, chargedEnergy, soc (%)}]
+  CJ -> TR : GET /observation-points/metering-data?observationPointId={EVSE's point}
+  TR --> CJ : 200
+end
+
+== 5. End of session (station-driven) ==
+
+hnote over CS : EV stops the energy transfer
+CS ->> TR : TransactionEventRequest(Updated, triggerReason = ChargingStateChanged,\nchargingState = EVConnected)
+TR -->> CS : TransactionEventResponse
+hnote over CS : EV unplugged
+CS ->> TR : TransactionEventRequest(Ended, triggerReason = EVCommunicationLost,\nstoppedReason = EVDisconnected, chargingState = Idle,\nmeterValue[Energy.Active.Import.Register, Energy.Active.Export.Register])
+TR -->> CS : TransactionEventResponse
+CS -> CS : drop the TxProfile
+CS ->> TR : NotifyEventRequest(Connector.AvailabilityState = Available)
+TR -->> CS : NotifyEventResponse
+
+@enduml

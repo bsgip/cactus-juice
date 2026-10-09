@@ -112,6 +112,7 @@ CACTUS_IMAGE__V1_3__RUNNER = "cactusimageregistry.azurecr.io/cactus-runner:158-v
 - `CERT_*_PATH` — host paths to PKI artefacts (generated in step 3).
 - `AUTH0_*` / `APP_SECRET_KEY` — OAuth2 credentials for cactus-ui.
 - `JWTAUTH_*` — JWT validation settings for cactus-orchestrator.
+- `UI_TLS_MODE` — `letsencrypt` (default) or `none` (plain HTTP for the operator facing UIs, see §5).
 
 ---
 
@@ -184,6 +185,23 @@ setup:
    `certbot certonly --webroot` or a DNS-01 challenge — the `--nginx` plugin is not used, as it assumes a
    distro nginx layout). Adjust the paths in the rendered config if you issue certs elsewhere.
 5. Validate and reload: `nginx -t && systemctl reload nginx` (or your build's equivalent).
+
+### Localhost / no Let's Encrypt
+
+Set `UI_TLS_MODE="none"` in `cactus.env` to serve the operator facing UIs (`webui` and `juice` modes) over plain
+HTTP on port 80 - no certificate needed, so skip step 4. This is intended for a local deployment, eg:
+
+```bash
+CACTUS_FQDN="localhost"           # cactus-ui at http://localhost/
+JUICE_FQDN="juice.localhost"      # cactus-juice at http://juice.localhost/
+UI_TLS_MODE="none"
+# ...and use http://localhost/ for JWTAUTH_AUDIENCE, CACTUS_ORCHESTRATOR_AUDIENCE, CACTUS_CLIENT_NOTIFICATIONS_SERVER_URL
+```
+
+`*.localhost` resolves to loopback in browsers (and via systemd-resolved), so no hosts file entries are needed. The
+DER domain (`run-XXX.localhost`) is unaffected - it is still HTTPS + mTLS using the self signed PKI from §4. Any
+OAuth2 (Auth0) callback / logout URLs must also be registered with `http://`. Juice's basic auth credentials are sent
+unencrypted in this mode, so don't expose port 80 beyond the local machine.
 
 
 ## (6) Database setup
@@ -392,8 +410,8 @@ ufw allow from 10.89.100.0/24 to any port 443 proto tcp
 ln -s /etc/nginx/sites-available/juice.cactus.cecs.anu.edu.au /etc/nginx/sites-enabled/juice.cactus.cecs.anu.edu.au
 ```
 
-Issue a certificate for `JUICE_FQDN` at `/etc/letsencrypt/live/${JUICE_FQDN}/` (as per §5 step 4), then
-`nginx -t && systemctl reload nginx`.
+Issue a certificate for `JUICE_FQDN` at `/etc/letsencrypt/live/${JUICE_FQDN}/` (as per §5 step 4 - not needed if
+`UI_TLS_MODE="none"`), then `nginx -t && systemctl reload nginx`.
 
 ## (J4) Deploy / update
 

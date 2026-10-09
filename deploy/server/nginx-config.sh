@@ -4,9 +4,14 @@
 # Usage: nginx-config.sh <der|webui|http|juice> [path-to-cactus.env]
 #
 #   der   — DER device-facing server block; mTLS + AES-128-CCM8; routes to Traefik
-#   webui — operator-facing UI server block; standard TLS; routes to cactus-ui
+#   webui — operator-facing UI server block; standard TLS (or plain HTTP); routes to cactus-ui
 #   http  — top-level http block (for templating /etc/nginx/nginx.conf)
-#   juice — cactus-juice UI/API server block; standard TLS + basic auth; routes to cactus-juice containers
+#   juice — cactus-juice UI/API server block; standard TLS (or plain HTTP) + basic auth; routes to cactus-juice containers
+#
+# UI_TLS_MODE (cactus.env) controls how the operator facing webui/juice server blocks are served:
+#   letsencrypt (default) — HTTPS on 443 with the certbot certs at /etc/letsencrypt/live/<fqdn>/ + HTTP redirect
+#   none                  — plain HTTP on 80 (eg a localhost deployment where Let's Encrypt isn't applicable)
+# The DER server block (self signed IEEE 2030.5 PKI + mTLS) is unaffected by UI_TLS_MODE.
 
 set -euo pipefail
 
@@ -38,6 +43,15 @@ source "$ENV_FILE"
 set +a
 
 export CACTUS_FQDN_REGEX="${CACTUS_FQDN//./\\.}"
+
+UI_TLS_MODE="${UI_TLS_MODE:-letsencrypt}"
+case "$UI_TLS_MODE" in
+    letsencrypt|none) ;;
+    *)
+        echo "ERROR: UI_TLS_MODE must be 'letsencrypt' or 'none' (got: ${UI_TLS_MODE})" >&2
+        exit 1
+        ;;
+esac
 
 # We only want specific variables to substitute into our nginx conf template
 # (nginx has many of its own vars we don't want to touch)
@@ -90,6 +104,54 @@ if (( ${#missing_vars[@]} > 0 )); then
     printf '  - %s\n' "${missing_vars[@]}" >&2
     exit 1
 fi
+
+# Prints the listen (+ TLS) directives for an operator facing UI server block, according to UI_TLS_MODE
+# Usage: ui_listen_config <fqdn> [dhparam]
+ui_listen_config() {
+    local fqdn="$1" dhparam="${2:-}"
+    if [[ "$UI_TLS_MODE" == "none" ]]; then
+        cat <<EOF
+    # Plain HTTP (UI_TLS_MODE=none) - no Let's Encrypt certificate required
+    listen 80;
+    listen [::]:80;
+EOF
+        return
+    fi
+
+    cat <<EOF
+    listen 443 ssl;
+    listen [::]:443 ssl;
+
+    # Let's Encrypt certificate (renewed via certbot; paths are standard certbot output)
+    ssl_certificate     /etc/letsencrypt/live/${fqdn}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${fqdn}/privkey.pem;
+EOF
+    if [[ -n "$dhparam" ]]; then
+        echo "    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;"
+    fi
+    cat <<EOF
+
+    ssl_protocols TLSv1.2;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+EOF
+}
+
+# Prints a HTTP -> HTTPS redirect server block for an operator facing UI (nothing when UI_TLS_MODE=none)
+# Usage: ui_https_redirect <fqdn>
+ui_https_redirect() {
+    local fqdn="$1"
+    [[ "$UI_TLS_MODE" == "none" ]] && return
+    cat <<EOF
+
+# Redirect HTTP → HTTPS
+server {
+    listen 80;
+    server_name ${fqdn};
+    return 301 https://\$host\$request_uri;
+}
+EOF
+}
 
 render_der() {
 envsubst "$ENVSUBST_VARS" <<"EOF"
@@ -164,28 +226,17 @@ EOF
 }
 
 render_webui() {
-envsubst "$ENVSUBST_VARS" <<"EOF"
+UI_LISTEN="$(ui_listen_config "$CACTUS_FQDN" dhparam)" envsubst "$ENVSUBST_VARS"' ${UI_LISTEN}' <<"EOF"
 # --- Web UI domain
 #
-# CACTUS_FQDN — operator-facing UI; standard TLS; routes to cactus-ui
+# CACTUS_FQDN — operator-facing UI; standard TLS (or plain HTTP if UI_TLS_MODE=none); routes to cactus-ui
 #
 # cactus-ui listens on 127.0.0.1:5000 (mapped from its container port 8080).
 # cactus-client-notifications listens on 127.0.0.1:5002 (mapped from its container port 8080).
 server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
+${UI_LISTEN}
 
     server_name ${CACTUS_FQDN};
-
-    # Let's Encrypt certificate (renewed via certbot; paths are standard certbot output)
-    ssl_certificate     /etc/letsencrypt/live/${CACTUS_FQDN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${CACTUS_FQDN}/privkey.pem;
-    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
-
-
-    ssl_protocols TLSv1.2;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-    ssl_prefer_server_ciphers on;
 
     proxy_read_timeout 300;
     proxy_send_timeout 300;
@@ -206,24 +257,18 @@ server {
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
-
-# Redirect HTTP → HTTPS
-server {
-    listen 80;
-    server_name ${CACTUS_FQDN};
-    return 301 https://$host$request_uri;
-}
 EOF
+ui_https_redirect "$CACTUS_FQDN"
 }
 
 render_juice() {
-envsubst "$JUICE_ENVSUBST_VARS" <<"EOF"
+UI_LISTEN="$(ui_listen_config "$JUICE_FQDN")" envsubst "$JUICE_ENVSUBST_VARS"' ${UI_LISTEN}' <<"EOF"
 # --- cactus-juice domain
 #
-# JUICE_FQDN — operator-facing cactus-juice UI + API; standard TLS; HTTP basic auth
+# JUICE_FQDN — operator-facing cactus-juice UI + API; standard TLS (or plain HTTP if UI_TLS_MODE=none); HTTP basic auth
 #
 # cactus-juice-frontend listens on 127.0.0.1:${JUICE_FRONTEND_PORT} (mapped from its container port 8080).
 # cactus-juice-api listens on 127.0.0.1:${JUICE_API_PORT} (mapped from its container port 8080).
@@ -231,18 +276,9 @@ envsubst "$JUICE_ENVSUBST_VARS" <<"EOF"
 # NOTE: If JUICE_FQDN is a subdomain of CACTUS_FQDN, this (exact) server_name takes precedence over the
 # DER vhost's wildcard regex - for both the HTTP host match and the TLS SNI certificate selection.
 server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
+${UI_LISTEN}
 
     server_name ${JUICE_FQDN};
-
-    # Let's Encrypt certificate (renewed via certbot; paths are standard certbot output)
-    ssl_certificate     /etc/letsencrypt/live/${JUICE_FQDN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${JUICE_FQDN}/privkey.pem;
-
-    ssl_protocols TLSv1.2;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-    ssl_prefer_server_ciphers on;
 
     # The juice API has no auth of its own (and manages client certs/keys + Troca credentials)
     auth_basic           "cactus-juice";
@@ -255,7 +291,7 @@ server {
     proxy_set_header Host              $host;
     proxy_set_header X-Real-IP         $remote_addr;
     proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-Proto $scheme;
 
     # FastAPI backend (JSON API + its interactive docs)
     location /api/ {
@@ -270,14 +306,8 @@ server {
         proxy_pass http://127.0.0.1:${JUICE_FRONTEND_PORT};
     }
 }
-
-# Redirect HTTP → HTTPS
-server {
-    listen 80;
-    server_name ${JUICE_FQDN};
-    return 301 https://$host$request_uri;
-}
 EOF
+ui_https_redirect "$JUICE_FQDN"
 }
 
 render_http() {
