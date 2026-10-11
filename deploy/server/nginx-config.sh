@@ -60,7 +60,6 @@ esac
 ENVSUBST_VARS=$(cat <<'EOF'
 ${CACTUS_FQDN}
 ${CACTUS_FQDN_REGEX}
-${CACTUS_CLIENT_NOTIFICATIONS_MOUNT_POINT}
 ${ENVOY_PREFIX}
 ${CERT_ENVOY_EE_FULLCHAIN_PATH}
 ${CERT_ENVOY_EE_KEY_PATH}
@@ -240,15 +239,6 @@ ${UI_LISTEN}
 
     proxy_read_timeout 300;
     proxy_send_timeout 300;
-
-    # cactus-client-notifications webhook endpoint
-    location ${CACTUS_CLIENT_NOTIFICATIONS_MOUNT_POINT} {
-        proxy_pass http://127.0.0.1:5002;
-        proxy_http_version 1.1;
-        proxy_set_header Host            $host;
-        proxy_set_header X-Real-IP       $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
 
     # Everything else goes to the cactus-ui Flask app
     location / {
