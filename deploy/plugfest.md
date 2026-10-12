@@ -32,6 +32,20 @@ git switch plugfest
 
 ## Setup DB
 
+As root:
+```
+
+vim /etc/postgresql/18/main/postgresql.conf
+# Set listen_addresses = '*';
+
+vim /etc/postgresql/18/main/pg_hba.conf
+# Set the following (double check the IP ranges for the podman network gateways that are created later)
+# host    cactusjuice    cactusjuiceuser    10.89.100.0/24    scram-sha-256
+# host    cactusorchestrator cactususer    10.89.0.1/24       scram-sha-256
+
+
+```
+
 ### Create DB
 
 As postgres:
@@ -95,6 +109,24 @@ As root:
 cd ~/cactus-juice/deploy/server
 ./setup.sh
 ./setup-juice.sh
+```
+
+
+## Nginx
+As root:
+```
+cd /localhome/cactus/cactus-juice/deploy/server
+
+# Create nginx config
+./nginx-config.sh der cactus.env   > /etc/nginx/sites-available/etc.cactus.localhost
+./nginx-config.sh webui cactus.env > /etc/nginx/sites-available/cactus.localhost
+./nginx-config.sh juice cactus.env > /etc/nginx/sites-available/juice.localhost
+./nginx-config.sh http cactus.env  > /etc/nginx/nginx.conf
+
+# Link it to sites-enabled
+ln -s /etc/nginx/sites-available/etc.cactus.localhost /etc/nginx/sites-enabled/etc.cactus.localhost
+ln -s /etc/nginx/sites-available/cactus.localhost /etc/nginx/sites-enabled/cactus.localhost
+ln -s /etc/nginx/sites-available/juice.localhost /etc/nginx/sites-enabled/juice.localhost
 ```
 
 ## Build orchestrator image
