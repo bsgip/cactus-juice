@@ -134,7 +134,7 @@ ln -s /etc/nginx/sites-available/juice.localhost /etc/nginx/sites-enabled/juice.
 As cactus:
 ```
 cd ~/cactus-juice
-podman build -t cactus-orchestrator:plugfest_latest --build-arg CACTUS_ORCHESTRATOR_VERSION="plugfest" --build-arg GITHUB_ORG="bsgip" "./deploy/docker/cactus-orchestrator"
+podman build -t cactus-orchestrator:plugfest_latest --build-arg CACTUS_ORCHESTRATOR_VERSION="plugfest" --build-arg GITHUB_ORG="bsgip" "./deploy/docker/cactus-orchestrator" --no-cache
 ```
 
 ## Start services
