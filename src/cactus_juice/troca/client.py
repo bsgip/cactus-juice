@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import logging
 import types
+from datetime import datetime
 from typing import Any, Self
 
 import aiohttp
 
+from .mapping import to_troca_timestamp
 from .models import (
     ActivePowerSchedule,
     CommandParameter,
@@ -34,6 +36,9 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Troca pages every collection GET - a request without a limit returns at most this many items
+TROCA_PAGE_SIZE = 500
 
 
 class TrocaApiError(Exception):
@@ -86,12 +91,27 @@ class TrocaClient:
         return self._session
 
     @staticmethod
-    def _params(limit: int | None, skip: int | None) -> dict[str, Any]:
+    def _params(
+        limit: int | None = None,
+        offset: int | None = None,
+        orderby: str | None = None,
+        filters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Builds Troca's query parameters. filters are ANDed together - each key is either a field name (equality)
+        or field[op] where op is one of gt, gte, lt, lte, ne or in (comma separated values). A datetime value is
+        encoded in Troca's own timestamp format. orderby is a field name, prefixed with "-" for descending.
+
+        Unknown fields aren't rejected - they just silently match nothing (eg "skip", which isn't Troca's offset)."""
         params: dict[str, Any] = {}
+        for key, value in (filters or {}).items():
+            if value is not None:
+                params[key] = to_troca_timestamp(value) if isinstance(value, datetime) else value
+        if orderby is not None:
+            params["orderby"] = orderby
         if limit is not None:
             params["limit"] = limit
-        if skip is not None:
-            params["skip"] = skip
+        if offset is not None:
+            params["offset"] = offset
         return params
 
     async def _request(
@@ -126,6 +146,29 @@ class TrocaClient:
         body = await self._request("GET", path, params=params)
         return json.loads(body) if body else None
 
+    async def _get_list(
+        self,
+        path: str,
+        *,
+        limit: int | None = None,
+        offset: int | None = None,
+        orderby: str | None = None,
+        filters: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """GETs a Troca collection. If limit is set, that single page is returned - otherwise every page (from
+        offset onwards) is fetched until Troca returns a short page."""
+        if limit is not None:
+            return await self._get(path, self._params(limit, offset, orderby, filters)) or []  # ty: ignore[invalid-return-type]
+
+        items: list[dict[str, Any]] = []
+        page_offset = offset or 0
+        while True:
+            page = await self._get(path, self._params(TROCA_PAGE_SIZE, page_offset, orderby, filters)) or []
+            items.extend(page)
+            if len(page) < TROCA_PAGE_SIZE:
+                return items
+            page_offset += TROCA_PAGE_SIZE
+
     async def _post(self, path: str, payload: list[dict[str, Any]] | dict[str, Any]) -> Any:  # noqa: ANN401
         """POSTs payload as JSON - returns the parsed JSON response body (or None if it's empty / not JSON, eg
         Troca's plain text "Success")."""
@@ -137,72 +180,120 @@ class TrocaClient:
 
     # -- Config -----------------------------------------------
 
-    async def get_connectors(self, *, limit: int | None = None, skip: int | None = None) -> list[Connector]:
-        data = await self._get("/config/connectors", self._params(limit, skip))
-        return [Connector.from_dict(item) for item in data or []]
+    async def get_connectors(self, *, limit: int | None = None, offset: int | None = None) -> list[Connector]:
+        data = await self._get_list("/config/connectors", limit=limit, offset=offset)
+        return [Connector.from_dict(item) for item in data]
 
     # -- Structure -------------------------------------------------------
 
-    async def get_pools(self, *, limit: int | None = None, skip: int | None = None) -> list[Pool]:
-        data = await self._get("/structure/pools", self._params(limit, skip))
-        return [Pool.from_dict(item) for item in data or []]
+    async def get_pools(self, *, limit: int | None = None, offset: int | None = None) -> list[Pool]:
+        data = await self._get_list("/structure/pools", limit=limit, offset=offset)
+        return [Pool.from_dict(item) for item in data]
 
-    async def get_stations(self, *, limit: int | None = None, skip: int | None = None) -> list[Station]:
-        data = await self._get("/structure/stations", self._params(limit, skip))
-        return [Station.from_dict(item) for item in data or []]
+    async def get_stations(self, *, limit: int | None = None, offset: int | None = None) -> list[Station]:
+        data = await self._get_list("/structure/stations", limit=limit, offset=offset)
+        return [Station.from_dict(item) for item in data]
 
-    async def get_evses(self, *, limit: int | None = None, skip: int | None = None) -> list[Evse]:
+    async def get_evses(self, *, limit: int | None = None, offset: int | None = None) -> list[Evse]:
         """EVSE identities only - electrical ratings have to be fetched from the station via get_variables."""
-        data = await self._get("/structure/evses", self._params(limit, skip))
-        return [Evse.from_dict(item) for item in data or []]
+        data = await self._get_list("/structure/evses", limit=limit, offset=offset)
+        return [Evse.from_dict(item) for item in data]
 
-    async def get_structure_pairs(self, *, limit: int | None = None, skip: int | None = None) -> list[StructurePair]:
-        data = await self._get("/structure/pairs", self._params(limit, skip))
-        return [StructurePair.from_dict(item) for item in data or []]
+    async def get_structure_pairs(self, *, limit: int | None = None, offset: int | None = None) -> list[StructurePair]:
+        data = await self._get_list("/structure/pairs", limit=limit, offset=offset)
+        return [StructurePair.from_dict(item) for item in data]
 
     # -- Sessions ----------------------------------------------------------
 
-    async def get_sessions(self, *, limit: int | None = None, skip: int | None = None) -> list[SessionData]:
-        data = await self._get("/sessions", self._params(limit, skip))
-        return [SessionData.from_dict(item) for item in data or []]
+    async def get_sessions(
+        self,
+        *,
+        updated_since: datetime | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        orderby: str | None = None,
+    ) -> list[SessionData]:
+        """updated_since restricts this to sessions created/changed at or after that moment (by lastUpdated)."""
+        filters = {"lastUpdated[gte]": updated_since}
+        data = await self._get_list("/sessions", limit=limit, offset=offset, orderby=orderby, filters=filters)
+        return [SessionData.from_dict(item) for item in data]
 
     async def get_session_statuses(
-        self, *, limit: int | None = None, skip: int | None = None
+        self,
+        *,
+        session_id: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        orderby: str | None = None,
     ) -> list[SessionStatusEntry]:
-        """The full status history of every session (see SessionStatusEntry)."""
-        data = await self._get("/sessions/status", self._params(limit, skip))
-        return [SessionStatusEntry.from_dict(item) for item in data or []]
+        """The status history of session_id (or every session if None) - see SessionStatusEntry."""
+        filters = {"sessionId": session_id}
+        data = await self._get_list("/sessions/status", limit=limit, offset=offset, orderby=orderby, filters=filters)
+        return [SessionStatusEntry.from_dict(item) for item in data]
 
     async def get_session_operational_data(
-        self, *, limit: int | None = None, skip: int | None = None
+        self,
+        *,
+        session_id: str | None = None,
+        after: datetime | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        orderby: str | None = None,
     ) -> list[SessionOperationalData]:
-        data = await self._get("/sessions/operational-data", self._params(limit, skip))
-        return [SessionOperationalData.from_dict(item) for item in data or []]
+        """Operational data for session_id (or every session if None), optionally only that timestamped strictly
+        after the specified moment."""
+        filters = {"sessionId": session_id, "timestamp[gt]": after}
+        data = await self._get_list(
+            "/sessions/operational-data", limit=limit, offset=offset, orderby=orderby, filters=filters
+        )
+        return [SessionOperationalData.from_dict(item) for item in data]
 
     # -- Power usage readings -------------------------------------------
 
-    async def get_metering_data(self, *, limit: int | None = None, skip: int | None = None) -> list[MeteringReading]:
-        data = await self._get("/observation-points/metering-data", self._params(limit, skip))
-        return [MeteringReading.from_dict(item) for item in data or []]
+    async def get_metering_data(
+        self,
+        *,
+        after: datetime | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        orderby: str | None = None,
+    ) -> list[MeteringReading]:
+        """Metering readings, optionally only those timestamped strictly after the specified moment."""
+        filters = {"timestamp[gt]": after}
+        data = await self._get_list(
+            "/observation-points/metering-data", limit=limit, offset=offset, orderby=orderby, filters=filters
+        )
+        return [MeteringReading.from_dict(item) for item in data]
 
     # -- Session commands (charging schedule read/write) --------------------
 
-    async def get_session_commands(self, *, limit: int | None = None, skip: int | None = None) -> list[SessionCommand]:
+    async def get_session_commands(
+        self, *, limit: int | None = None, offset: int | None = None
+    ) -> list[SessionCommand]:
         """Every recorded session command - both ours and Troca's own internal ones (see SessionCommand)."""
-        data = await self._get("/sessions/commands", self._params(limit, skip))
-        return [SessionCommand.from_dict(item) for item in data or []]
+        data = await self._get_list("/sessions/commands", limit=limit, offset=offset)
+        return [SessionCommand.from_dict(item) for item in data]
 
     async def get_session_command_statuses(
-        self, *, limit: int | None = None, skip: int | None = None
+        self,
+        *,
+        command_id: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        orderby: str | None = None,
     ) -> list[SessionCommandStatusEntry]:
-        data = await self._get("/sessions/commands/status", self._params(limit, skip))
-        return [SessionCommandStatusEntry.from_dict(item) for item in data or []]
+        """The status history of command_id (or every command if None)."""
+        filters = {"commandId": command_id}
+        data = await self._get_list(
+            "/sessions/commands/status", limit=limit, offset=offset, orderby=orderby, filters=filters
+        )
+        return [SessionCommandStatusEntry.from_dict(item) for item in data]
 
     async def get_session_command_locations(
-        self, *, limit: int | None = None, skip: int | None = None
+        self, *, limit: int | None = None, offset: int | None = None
     ) -> list[SessionCommandLocation]:
-        data = await self._get("/sessions/commands/locations", self._params(limit, skip))
-        return [SessionCommandLocation.from_dict(item) for item in data or []]
+        data = await self._get_list("/sessions/commands/locations", limit=limit, offset=offset)
+        return [SessionCommandLocation.from_dict(item) for item in data]
 
     async def send_session_commands(self, commands: list[SessionCommand]) -> None:
         await self._post("/sessions/commands", [c.to_dict() for c in commands])

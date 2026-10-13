@@ -2,12 +2,16 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from assertical.fake.generator import generate_class_instance
 
+from cactus_juice.model import OCPPReading
 from cactus_juice.troca import poll
+from cactus_juice.troca.mapping import to_troca_timestamp
 from cactus_juice.troca.models import (
     Connector,
     ConnectorType,
     LocationId,
+    MeteringReading,
     OcppTarget,
     ScheduleSyncMode,
     Station,
@@ -30,12 +34,18 @@ CONNECTOR_ID = "d6ccd51d-4b07-463f-89e3-f4eb7a7a1e58"
 class FakeTrocaClient:
     connectors: list[Connector] = field(default_factory=list)
     stations: list[Station] = field(default_factory=list)
+    metering_data: list[MeteringReading] = field(default_factory=list)
+    metering_queries: list[dict] = field(default_factory=list)
 
     async def get_connectors(self) -> list[Connector]:
         return self.connectors
 
     async def get_stations(self) -> list[Station]:
         return self.stations
+
+    async def get_metering_data(self, **kwargs) -> list[MeteringReading]:
+        self.metering_queries.append(kwargs)
+        return self.metering_data
 
 
 def connector(name: str, connector_id: str = CONNECTOR_ID, t: ConnectorType = ConnectorType.Q_OCPP) -> Connector:
@@ -183,3 +193,33 @@ async def test_poll_metadata_configures_metering_once_per_station(monkeypatch: p
     fail = False
     await poll.poll_metadata(state, None, NOW)  # ty: ignore[invalid-argument-type]
     assert configured == ["FR*TRI*E123", "CS2"]
+
+
+async def test_poll_readings_only_requests_new(monkeypatch: pytest.MonkeyPatch):
+    added: list[list[OCPPReading]] = []
+
+    async def add_ocpp_readings(session, readings):
+        added.append(readings)
+
+    monkeypatch.setattr(poll, "add_ocpp_readings", add_ocpp_readings)
+    client = FakeTrocaClient()
+    state = client_state(client)
+    state.last_reading_at = NOW
+
+    # Out of order (as Troca's default ordering is) - plus one that Troca shouldn't have returned
+    client.metering_data = [
+        generate_class_instance(MeteringReading, seed=1, timestamp=to_troca_timestamp(NOW + timedelta(seconds=20))),
+        generate_class_instance(MeteringReading, seed=2, timestamp=to_troca_timestamp(NOW)),
+        generate_class_instance(MeteringReading, seed=3, timestamp=to_troca_timestamp(NOW + timedelta(seconds=10))),
+    ]
+    await poll.poll_readings(state, None, NOW)  # ty: ignore[invalid-argument-type]
+
+    assert client.metering_queries == [{"after": NOW, "orderby": "timestamp"}]
+    assert [r.reading_start for r in added[0]] == [NOW + timedelta(seconds=20), NOW + timedelta(seconds=10)]
+    assert state.last_reading_at == NOW + timedelta(seconds=20)
+
+    # Nothing new - last_reading_at is retained for the next poll
+    client.metering_data = []
+    await poll.poll_readings(state, None, NOW)  # ty: ignore[invalid-argument-type]
+    assert client.metering_queries[-1] == {"after": NOW + timedelta(seconds=20), "orderby": "timestamp"}
+    assert state.last_reading_at == NOW + timedelta(seconds=20)

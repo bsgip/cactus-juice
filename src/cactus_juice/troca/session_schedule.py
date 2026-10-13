@@ -41,6 +41,10 @@ INACTIVE_SESSION_STATUSES = (SessionStatus.COMPLETED, SessionStatus.INVALID, Ses
 # after that failure - retrying on every schedule poll would just spam the station with the same bad request.
 FAILED_SCHEDULE_RETRY_INTERVAL = timedelta(minutes=5)
 
+# Only this many of the most recently arrived sessions are considered when looking for the active session (Troca
+# keeps every session ever and each has a long status history - so they can't all be fetched on every poll)
+ACTIVE_SESSION_CANDIDATES = 5
+
 
 def find_active_session(sessions: Iterable[SessionData], statuses: Iterable[SessionStatusEntry]) -> SessionData | None:
     """Finds the currently active session - ie the most recently arrived session whose latest status isn't one of
@@ -62,6 +66,18 @@ def find_active_session(sessions: Iterable[SessionData], statuses: Iterable[Sess
         logger.warning(f"{len(active)} active Troca sessions found - using the most recent arrival.")
 
     return max(active, key=lambda s: s.arrival_date or "", default=None)
+
+
+async def fetch_active_session(client: TrocaClient) -> SessionData | None:
+    """Fetches the most recently arrived sessions (and the latest status of each) and finds the active one - see
+    find_active_session."""
+    sessions = await client.get_sessions(limit=ACTIVE_SESSION_CANDIDATES, orderby="-arrivalDate")
+    latest_statuses: list[SessionStatusEntry] = []
+    for s in sessions:
+        latest_statuses.extend(
+            await client.get_session_statuses(session_id=s.session_id, orderby="-timestamp", limit=1)
+        )
+    return find_active_session(sessions, latest_statuses)
 
 
 def find_evse_location(session_data: SessionData, pairs: Iterable[StructurePair]) -> LocationId | None:
@@ -157,9 +173,7 @@ async def sync_session_schedule(
 
     evse_location is the EVSE the schedule is sent to - if None, it's discovered from the active session."""
 
-    sessions = await client.get_sessions()
-    session_statuses = await client.get_session_statuses()
-    active_session = find_active_session(sessions, session_statuses)
+    active_session = await fetch_active_session(client)
     if active_session is None:
         logger.info("No active Troca session - no schedule to sync.")
         return
@@ -189,7 +203,9 @@ async def sync_session_schedule(
     )
     status = None
     if pushed is not None:
-        status = latest_command_status(await client.get_session_command_statuses(), pushed[0].command_id)
+        pushed_id = pushed[0].command_id
+        latest = await client.get_session_command_statuses(command_id=pushed_id, orderby="-timestamp", limit=1)
+        status = latest_command_status(latest, pushed_id)
 
     if not requires_push(pushed, status, desired, now):
         return

@@ -23,7 +23,9 @@ from cactus_juice.troca.models import (
 )
 from cactus_juice.troca.poll import POLL_EPOCH
 from cactus_juice.troca.session_schedule import (
+    ACTIVE_SESSION_CANDIDATES,
     FAILED_SCHEDULE_RETRY_INTERVAL,
+    fetch_active_session,
     find_active_session,
     find_evse_location,
     find_latest_pushed_schedule,
@@ -78,6 +80,38 @@ def test_find_active_session_status_order():
     """The latest status wins, regardless of the order they're returned in"""
     statuses = [status("s", SessionStatus.COMPLETED, -1), status("s", SessionStatus.CHARGING, -5)]
     assert find_active_session([session("s", -5)], statuses) is None
+
+
+class FakeSessionClient:
+    def __init__(self, sessions: list[SessionData], statuses: list[SessionStatusEntry]) -> None:
+        self.sessions = sessions
+        self.statuses = statuses
+        self.queries: list[dict] = []
+
+    async def get_sessions(self, **kwargs) -> list[SessionData]:
+        self.queries.append(kwargs)
+        return self.sessions
+
+    async def get_session_statuses(self, *, session_id: str, **kwargs) -> list[SessionStatusEntry]:
+        self.queries.append({"session_id": session_id, **kwargs})
+        return [s for s in self.statuses if s.session_id == session_id]
+
+
+async def test_fetch_active_session():
+    """Only the most recent sessions are fetched, with just the latest status of each"""
+    client = FakeSessionClient(
+        [session("current", -5), session("done", -60)],
+        [status("current", SessionStatus.CHARGING, -5), status("done", SessionStatus.COMPLETED, -30)],
+    )
+    active = await fetch_active_session(client)  # ty: ignore[invalid-argument-type]
+    assert active is not None and active.session_id == "current"
+    assert client.queries == [
+        {"limit": ACTIVE_SESSION_CANDIDATES, "orderby": "-arrivalDate"},
+        {"session_id": "current", "orderby": "-timestamp", "limit": 1},
+        {"session_id": "done", "orderby": "-timestamp", "limit": 1},
+    ]
+
+    assert await fetch_active_session(FakeSessionClient([], [])) is None  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.parametrize(

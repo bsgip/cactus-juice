@@ -52,7 +52,7 @@ class ClientState:
     metadata_poll: Pollable  # Poll status of the connected EVSE metadata
     ramp_step: timedelta
 
-    # Troca returns its whole metering history on every poll - only readings after this are new
+    # The latest reading received so far - each poll only asks Troca for readings after this
     last_reading_at: datetime
 
     schedule_sync_mode: ScheduleSyncMode = DEFAULT_SCHEDULE_SYNC_MODE
@@ -151,7 +151,10 @@ async def resolve_ocpp_target(state: ClientState) -> OcppTarget | None:
 
 async def poll_readings(state: ClientState, session: AsyncSession, now: datetime) -> None:
     """Takes a snapshot of any new OCPP readings via troca and pushes them into the DB"""
-    readings = [reading_to_db(r) for r in await state.client.get_metering_data()]
+    metering_data = await state.client.get_metering_data(after=state.last_reading_at, orderby="timestamp")
+
+    # last_reading_at is sent truncated to whole seconds - re-filtering stops a sub second reading being re-added
+    readings = [reading_to_db(r) for r in metering_data]
     new_readings = [r for r in readings if r.reading_start > state.last_reading_at]
 
     await add_ocpp_readings(session, new_readings)
