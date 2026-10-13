@@ -21,6 +21,7 @@ from cactus_juice.troca.models import (
     StructureLevel,
     ocpp_version_from_connector_name,
 )
+from cactus_juice.troca.ocpp_metering import configure_metering
 from cactus_juice.troca.ocpp_schedule import PushedProfile, sync_ocpp_schedule
 from cactus_juice.troca.session_schedule import sync_session_schedule
 
@@ -55,6 +56,7 @@ class ClientState:
 
     schedule_sync_mode: ScheduleSyncMode = DEFAULT_SCHEDULE_SYNC_MODE
     pushed_profile: PushedProfile | None = None  # What was last pushed to the station (ScheduleSyncMode.OCPP only)
+    metering_configured_station: str | None = None  # The station whose sampled meter values were last configured
 
     # Configured values that would otherwise be discovered via the Troca API (None = discover on each poll)
     ocpp_connector_name: str | None = None
@@ -157,11 +159,15 @@ async def poll_readings(state: ClientState, session: AsyncSession, now: datetime
 
 async def poll_metadata(state: ClientState, session: AsyncSession, now: datetime) -> None:
     """Asks the charging station directly (via Troca's OCPP passthrough) for its rated power and updates the DB
-    with the latest values."""
+    with the latest values. The first poll of a station also configures which meter values it samples."""
 
     target = await resolve_ocpp_target(state)
     if target is None:
         return
+
+    if state.metering_configured_station != target.station_name:
+        await configure_metering(state.client, target)
+        state.metering_configured_station = target.station_name
 
     evse_nb = state.ocpp_evse_nb if state.ocpp_evse_nb is not None else DEFAULT_OCPP_EVSE_NB
     results = await state.client.get_variables(target, rated_power_variables(evse_nb))

@@ -25,6 +25,8 @@ from .models import (
     SessionData,
     SessionOperationalData,
     SessionStatusEntry,
+    SetVariableData,
+    SetVariableResult,
     Station,
     StructurePair,
     set_charging_profile_parameters,
@@ -219,6 +221,13 @@ class TrocaClient:
             target, "GetVariables", {"getVariableData": [r.to_dict() for r in requests]}
         )
         return [GetVariableResult.from_dict(r) for r in (response or {}).get("getVariableResult", [])]
+
+    async def set_variables(self, target: OcppTarget, requests: list[SetVariableData]) -> list[SetVariableResult]:
+        """OCPP 2.x SetVariables via the passthrough."""
+        response = await self.send_ocpp_command(
+            target, "SetVariables", {"setVariableData": [r.to_dict() for r in requests]}
+        )
+        return [SetVariableResult.from_dict(r) for r in (response or {}).get("setVariableResult", [])]
 
     async def set_charging_profile(self, target: OcppTarget, evse_id: int, profile: OcppChargingProfile) -> str:
         """OCPP 2.x SetChargingProfile via the passthrough - returns the station's response status (eg Accepted).

@@ -150,3 +150,36 @@ async def test_resolve_ocpp_target_configured(overrides: dict, expected: OcppTar
 
     assert await resolve_ocpp_target(state) == expected
     assert client.calls == expected_calls
+
+
+async def test_poll_metadata_configures_metering_once_per_station(monkeypatch: pytest.MonkeyPatch):
+    configured: list[str] = []
+    fail = False
+
+    async def configure_metering(client, target):
+        if fail:
+            raise ConnectionError("boom")
+        configured.append(target.station_name)
+
+    async def get_variables(target, requests):
+        return []  # No usable rated power - poll_metadata stops before touching the DB
+
+    monkeypatch.setattr(poll, "configure_metering", configure_metering)
+    client = FakeTrocaClient([connector("qocppConnector2.1")], [station("FR*TRI*E123")])
+    client.get_variables = get_variables  # ty: ignore[unresolved-attribute]
+    state = client_state(client)
+
+    await poll.poll_metadata(state, None, NOW)  # ty: ignore[invalid-argument-type]
+    await poll.poll_metadata(state, None, NOW)  # ty: ignore[invalid-argument-type]
+    assert configured == ["FR*TRI*E123"]
+
+    # A different station gets configured too - and a failure is retried on the next poll
+    state.ocpp_station_name = "CS2"
+    fail = True
+    with pytest.raises(ConnectionError):
+        await poll.poll_metadata(state, None, NOW)  # ty: ignore[invalid-argument-type]
+    assert state.metering_configured_station == "FR*TRI*E123"
+
+    fail = False
+    await poll.poll_metadata(state, None, NOW)  # ty: ignore[invalid-argument-type]
+    assert configured == ["FR*TRI*E123", "CS2"]

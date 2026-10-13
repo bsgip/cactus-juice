@@ -457,6 +457,31 @@ class GetVariableResult(TrocaModel):
         return self.attribute_status == "Accepted"
 
 
+@dataclass(frozen=True)
+class SetVariableData(TrocaModel):
+    """OCPP 2.x ``SetVariableDataType``."""
+
+    component: OcppComponent
+    variable: OcppVariable
+    attribute_value: str = field(metadata={"alias": "attributeValue"})
+    attribute_type: str | None = field(default=None, metadata={"alias": "attributeType"})
+
+
+@dataclass(frozen=True)
+class SetVariableResult(TrocaModel):
+    """OCPP 2.x ``SetVariableResultType``. A list valued variable (eg a measurand list) is Rejected as a whole if
+    any one of its values isn't supported by the station."""
+
+    attribute_status: str = field(metadata={"alias": "attributeStatus"})
+    component: OcppComponent
+    variable: OcppVariable
+    attribute_type: str | None = field(default=None, metadata={"alias": "attributeType"})
+
+    @property
+    def accepted(self) -> bool:
+        return self.attribute_status == "Accepted"
+
+
 # Pulls the OCPP version off the end of an OCPP connector's name, eg "qocppConnector2.1" -> "2.1"
 OCPP_VERSION_PATTERN = re.compile(r"(\d+(?:\.\d+)+)$")
 

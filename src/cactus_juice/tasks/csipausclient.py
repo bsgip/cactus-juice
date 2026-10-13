@@ -58,7 +58,6 @@ async def _refresh_state(
     async with db.session_maker() as session:
         config = await fetch_csipaus_config(session)
         if config is None:
-            logger.warning("No CSIPAusConfig is currently registered - will check again shortly.")
             return state, active_config_id
 
         if state is not None and config.csipaus_config_id == active_config_id:

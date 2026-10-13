@@ -70,7 +70,6 @@ async def _refresh_state(
     async with db.session_maker() as session:
         config = await fetch_troca_config(session)
         if config is None:
-            logger.warning("No TrocaConfig is currently registered - will check again shortly.")
             return state, active_config_id
 
         if config.connector_id is None and config.ocpp_connector_name is None:
