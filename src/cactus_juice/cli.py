@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import sys
 
 import click
@@ -11,9 +12,10 @@ logger = logging.getLogger(__name__)
 
 
 def configure_logging() -> None:
-    """Ensures python logging emits to stdout - this is what a container runtime will typically capture."""
+    """Ensures python logging emits to stdout - this is what a container runtime will typically capture. The level
+    defaults to INFO but can be overridden with the JUICE_LOG_LEVEL env var (eg DEBUG)."""
     logging.basicConfig(
-        level=logging.INFO,
+        level=os.environ.get("JUICE_LOG_LEVEL", "INFO").strip().upper() or "INFO",
         stream=sys.stdout,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )

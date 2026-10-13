@@ -54,6 +54,15 @@ for task in "${enabled_tasks[@]}"; do
     fi
 done
 
+JUICE_TASKS_LOG_LEVEL="${JUICE_TASKS_LOG_LEVEL:-INFO}"
+case "${JUICE_TASKS_LOG_LEVEL^^}" in
+    DEBUG|INFO|WARNING|ERROR|CRITICAL) ;;
+    *)
+        echo "ERROR: JUICE_TASKS_LOG_LEVEL '${JUICE_TASKS_LOG_LEVEL}' is not one of DEBUG INFO WARNING ERROR CRITICAL" >&2
+        exit 1
+        ;;
+esac
+
 read -r -a satec_devices <<< "${JUICE_SATEC_DEVICES:-}"
 for device in "${satec_devices[@]}"; do
     if [[ ! -c "$device" ]]; then
@@ -158,6 +167,7 @@ for task in "${ALL_TASKS[@]}"; do
 
     deploy_container "$name" \
         -e JUICE_DATABASE_URL="$JUICE_DATABASE_URL" \
+        -e JUICE_LOG_LEVEL="$JUICE_TASKS_LOG_LEVEL" \
         "${task_args[@]}" \
         "$JUICE_IMAGE" \
         juice task "$task"

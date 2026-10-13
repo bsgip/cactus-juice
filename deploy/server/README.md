@@ -437,5 +437,8 @@ journalctl -f CONTAINER_NAME=cactus-juice-api + CONTAINER_NAME=cactus-juice-troc
 
 Each task also records a heartbeat/last error in the DB, shown on the UI's telemetry page.
 
+For more detail, set `JUICE_TASKS_LOG_LEVEL="DEBUG"` in `cactus.env` and re-run `update-juice.sh`. This logs every
+Troca request/response body, for example. Set it back to `INFO` once you're done.
+
 Old image tags accumulate one per deployed commit - prune them periodically with
 `podman image prune -f && podman images localhost/cactus-juice*`, removing unused tags with `podman rmi`.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import types
 from typing import Any, Self
 
@@ -31,6 +32,8 @@ from .models import (
     StructurePair,
     set_charging_profile_parameters,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class TrocaApiError(Exception):
@@ -91,26 +94,46 @@ class TrocaClient:
             params["skip"] = skip
         return params
 
-    async def _get(self, path: str, params: dict[str, Any] | None = None) -> dict | list | None:
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        params: dict[str, Any] | None = None,
+        payload: Any = None,  # noqa: ANN401
+    ) -> str:
+        """Sends a request (payload is JSON encoded if not None), returning the raw response body text. Every request
+        is logged at INFO (with the bodies logged at DEBUG). Raises TrocaApiError on a non 2xx response."""
         session = self._ensure_session()
-        async with session.get(f"{self._base_url}{path}", params=params) as resp:
+        request_body = json.dumps(payload).encode() if payload is not None else b""
+        headers = {"Content-Type": "application/json"} if payload is not None else None
+        async with session.request(
+            method, f"{self._base_url}{path}", params=params, data=request_body or None, headers=headers
+        ) as resp:
+            response_bytes = await resp.read()
             body = await resp.text()
+            logger.info(
+                f"Troca {method} {path} params={params or {}} -> {resp.status} "
+                f"(request {len(request_body)} bytes, response {len(response_bytes)} bytes)"
+            )
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Troca {method} {path} request body: {request_body.decode()}")
+                logger.debug(f"Troca {method} {path} response body: {body}")
             if resp.status >= 400:
-                raise TrocaApiError(resp.status, "GET", path, body)
-            return await resp.json(content_type=None) if body else None
+                raise TrocaApiError(resp.status, method, path, body)
+            return body
+
+    async def _get(self, path: str, params: dict[str, Any] | None = None) -> dict | list | None:
+        body = await self._request("GET", path, params=params)
+        return json.loads(body) if body else None
 
     async def _post(self, path: str, payload: list[dict[str, Any]] | dict[str, Any]) -> Any:  # noqa: ANN401
         """POSTs payload as JSON - returns the parsed JSON response body (or None if it's empty / not JSON, eg
         Troca's plain text "Success")."""
-        session = self._ensure_session()
-        async with session.post(f"{self._base_url}{path}", json=payload) as resp:
-            body = await resp.text()
-            if resp.status >= 400:
-                raise TrocaApiError(resp.status, "POST", path, body)
-            try:
-                return json.loads(body) if body else None
-            except ValueError:
-                return None
+        body = await self._request("POST", path, payload=payload)
+        try:
+            return json.loads(body) if body else None
+        except ValueError:
+            return None
 
     # -- Config -----------------------------------------------
 
