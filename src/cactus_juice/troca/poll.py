@@ -22,6 +22,7 @@ from cactus_juice.troca.models import (
     ocpp_version_from_connector_name,
 )
 from cactus_juice.troca.ocpp_metering import configure_metering
+from cactus_juice.troca.ocpp_prices import PushedPrices, sync_ocpp_prices
 from cactus_juice.troca.ocpp_schedule import PushedProfile, sync_ocpp_schedule
 from cactus_juice.troca.session_schedule import sync_session_schedule
 
@@ -56,6 +57,7 @@ class ClientState:
 
     schedule_sync_mode: ScheduleSyncMode = DEFAULT_SCHEDULE_SYNC_MODE
     pushed_profile: PushedProfile | None = None  # What was last pushed to the station (ScheduleSyncMode.OCPP only)
+    pushed_prices: PushedPrices | None = None  # The dynamic prices last pushed to the station
     metering_configured_station: str | None = None  # The station whose sampled meter values were last configured
 
     # Configured values that would otherwise be discovered via the Troca API (None = discover on each poll)
@@ -194,6 +196,16 @@ async def poll_schedules(state: ClientState, session: AsyncSession, now: datetim
     state.pushed_profile = await sync_ocpp_schedule(state.client, target, session, now, state.pushed_profile)
 
 
+async def poll_prices(state: ClientState, session: AsyncSession, now: datetime) -> None:
+    """Keeps the charging station's price schedule in sync with the CSIP-Aus dynamic prices (regardless of
+    state.schedule_sync_mode - prices always go via the OCPP passthrough)."""
+
+    target = await resolve_ocpp_target(state)
+    if target is None:
+        return
+    state.pushed_prices = await sync_ocpp_prices(state.client, target, session, now, state.pushed_prices)
+
+
 def poll_required(pollable: Pollable, now: datetime) -> bool:
     return now >= (pollable.last_poll + pollable.poll_rate)
 
@@ -236,6 +248,14 @@ async def run_polls(state: ClientState, min_wait: timedelta = timedelta(seconds=
                 await session.commit()
         except Exception:
             logger.exception("Failed polling/pushing the Troca charging schedule.")
+
+        # Prices share the schedule's poll rate - but a failure in one doesn't prevent the other
+        try:
+            async with state.db.session_maker() as session:
+                await poll_prices(state, session, now)
+                await session.commit()
+        except Exception:
+            logger.exception("Failed pushing the Troca price schedule.")
         finally:
             state.schedule_poll.last_poll = now
 

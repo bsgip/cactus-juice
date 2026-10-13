@@ -518,6 +518,43 @@ class OcppChargingSchedulePeriod(TrocaModel):
 
 
 @dataclass(frozen=True)
+class OcppRationalNumber(TrocaModel):
+    """OCPP 2.1 ``RationalNumberType`` - value * 10^exponent."""
+
+    exponent: int
+    value: int
+
+
+@dataclass(frozen=True)
+class OcppPriceRule(TrocaModel):
+    """OCPP 2.1 ``PriceRuleType`` (subset) - energy_fee (per kWh) applies from power_range_start (kW) upwards."""
+
+    energy_fee: OcppRationalNumber = field(metadata={"alias": "energyFee"})
+    power_range_start: OcppRationalNumber = field(metadata={"alias": "powerRangeStart"})
+
+
+@dataclass(frozen=True)
+class OcppPriceRuleStack(TrocaModel):
+    """OCPP 2.1 ``PriceRuleStackType`` - duration is how long (seconds) these rules apply for, with each stack
+    following on directly from the previous one."""
+
+    duration: int
+    price_rule: list[OcppPriceRule] = field(metadata={"alias": "priceRule"})
+
+
+@dataclass(frozen=True)
+class OcppAbsolutePriceSchedule(TrocaModel):
+    """OCPP 2.1 ``AbsolutePriceScheduleType`` (subset) - an ISO 15118-20 price schedule, starting at time_anchor."""
+
+    time_anchor: str = field(metadata={"alias": "timeAnchor"})
+    price_schedule_id: int = field(metadata={"alias": "priceScheduleID"})
+    currency: str
+    language: str
+    price_algorithm: str = field(metadata={"alias": "priceAlgorithm"})
+    price_rule_stacks: list[OcppPriceRuleStack] = field(metadata={"alias": "priceRuleStacks"})
+
+
+@dataclass(frozen=True)
 class OcppChargingSchedule(TrocaModel):
     """OCPP 2.x ``ChargingScheduleType`` (subset)."""
 
@@ -526,6 +563,9 @@ class OcppChargingSchedule(TrocaModel):
     charging_schedule_period: list[OcppChargingSchedulePeriod] = field(metadata={"alias": "chargingSchedulePeriod"})
     start_schedule: str | None = field(default=None, metadata={"alias": "startSchedule"})
     duration: int | None = None
+    absolute_price_schedule: OcppAbsolutePriceSchedule | None = field(
+        default=None, metadata={"alias": "absolutePriceSchedule"}
+    )  # OCPP 2.1 only
 
 
 @dataclass(frozen=True)

@@ -1,21 +1,26 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 from cactus_juice.csipaus.dto import ActiveValues, ScheduledControlValues
-from cactus_juice.model import OCPPMetadata, OCPPReading
+from cactus_juice.model import CSIPAusDynamicPrice, OCPPMetadata, OCPPReading
 from cactus_juice.troca.models import (
     ActivePowerSchedule,
     Bounds,
     GetVariableData,
     GetVariableResult,
     MeteringReading,
+    OcppAbsolutePriceSchedule,
     OcppChargingProfile,
     OcppChargingProfilePurpose,
     OcppChargingSchedule,
     OcppChargingSchedulePeriod,
     OcppComponent,
     OcppEvse,
+    OcppPriceRule,
+    OcppPriceRuleStack,
+    OcppRationalNumber,
     OcppVariable,
     SchedulePeriod,
     TEmsValue,
@@ -376,3 +381,124 @@ def ocpp_profiles_match(applied: OcppChargingProfile, desired: OcppChargingProfi
     """True if applied (a previously pushed profile) will produce the same limits as desired from now onwards
     (see _segments_match). Only absolute profiles (with a startSchedule/duration) are supported."""
     return _segments_match(_ocpp_segments(applied, now), _ocpp_segments(desired, now), now)
+
+
+# -- Dynamic prices -> OCPP 2.1 absolutePriceSchedule ---------------------------------------------------------------
+
+# CSIP-Aus prices are in dollars / kWh
+PRICE_CURRENCY = "AUD"
+PRICE_LANGUAGE = "en"
+PRICE_ALGORITHM = "urn:iso:std:iso:15118:-20:PriceAlgorithm:1-Power"
+
+# Conservative cap on the number of priceRuleStacks sent - anything past this is truncated (and will be pushed on a
+# later sync, once the earlier prices have elapsed).
+MAX_PRICE_RULE_STACKS = 100
+
+
+@dataclass(frozen=True, slots=True)
+class PriceSegment:
+    start: datetime
+    end: datetime
+    price_kwh: Decimal
+
+
+def dynamic_prices_to_segments(prices: Sequence[CSIPAusDynamicPrice], now: datetime) -> list[PriceSegment]:
+    """Flattens (potentially overlapping) dynamic prices into the contiguous run of non overlapping price segments
+    that's either active at now, or the next to start. Where prices overlap, only those at the lowest primacy
+    apply - and if there are several at that primacy, their prices are summed. Prices without a price_kwh, that are
+    cancelled or that have finished are ignored. Adjacent segments with the same price are merged.
+
+    Segments keep the start time of their price (even if that's before now) so that the result is stable across
+    polls. Only the first contiguous run is returned (a gap ends it) - capped at MAX_PRICE_RULE_STACKS segments."""
+
+    # (primacy, start, end, price_kwh) of every price that's still relevant
+    candidates: list[tuple[int, datetime, datetime, Decimal]] = []
+    for p in prices:
+        end = min(p.finished_at, p.cancelled_at) if p.cancelled_at is not None else p.finished_at
+        if p.price_kwh is not None and end > now and end > p.started_at:
+            candidates.append((p.primacy, p.started_at, end, p.price_kwh))
+
+    boundaries = sorted({t for _, start, end, _ in candidates for t in (start, end)})
+    segments: list[PriceSegment] = []
+    for start, end in zip(boundaries, boundaries[1:], strict=False):
+        active = [
+            (primacy, price) for primacy, p_start, p_end, price in candidates if p_start <= start and p_end >= end
+        ]
+        if not active:
+            if segments:
+                break  # Gap - end of the first contiguous run
+            continue
+
+        top_primacy = min(primacy for primacy, _ in active)
+        price = sum((price for primacy, price in active if primacy == top_primacy), Decimal(0))
+        if segments and segments[-1].price_kwh == price:
+            segments[-1] = PriceSegment(segments[-1].start, end, price)
+        else:
+            segments.append(PriceSegment(start, end, price))
+
+    return segments[:MAX_PRICE_RULE_STACKS]
+
+
+def price_to_rational(price: Decimal) -> OcppRationalNumber:
+    """Encodes a decimal price exactly as an OCPP RationalNumber (value * 10^exponent), eg 0.3050 -> 305e-3."""
+    sign, digits, exponent = price.normalize().as_tuple()
+    value = int("".join(str(d) for d in digits)) * (-1 if sign else 1)
+    if not isinstance(exponent, int):
+        raise ValueError(f"Price {price} isn't a finite number.")
+    if exponent > 0:  # eg 1E+1 - keep the exponent non positive so the value carries every significant digit
+        value, exponent = value * 10**exponent, 0
+    return OcppRationalNumber(exponent=exponent, value=value)
+
+
+def prices_to_ocpp_profile(
+    segments: Sequence[PriceSegment],
+    profile_id: int,
+    stack_level: int,
+    purpose: OcppChargingProfilePurpose,
+    limit_watts: float,
+    price_schedule_id: int,
+) -> OcppChargingProfile | None:
+    """Maps price segments (see dynamic_prices_to_segments) into an absolute OCPP 2.1 charging profile carrying an
+    absolutePriceSchedule - one priceRuleStack per segment. The profile's only charging period is a flat
+    limit_watts for the duration of the prices. Returns None if there are no segments."""
+
+    if not segments:
+        return None
+
+    anchor = segments[0].start.replace(microsecond=0)
+    timestamp = to_troca_timestamp(anchor)
+    stacks = [
+        OcppPriceRuleStack(
+            duration=int((seg.end - seg.start).total_seconds()),
+            price_rule=[
+                OcppPriceRule(
+                    energy_fee=price_to_rational(seg.price_kwh),
+                    power_range_start=OcppRationalNumber(exponent=0, value=0),
+                )
+            ],
+        )
+        for seg in segments
+    ]
+    return OcppChargingProfile(
+        id=profile_id,
+        stack_level=stack_level,
+        charging_profile_purpose=purpose,
+        charging_profile_kind=OCPP_PROFILE_KIND_ABSOLUTE,
+        charging_schedule=[
+            OcppChargingSchedule(
+                id=1,
+                charging_rate_unit=OCPP_CHARGING_RATE_UNIT,
+                charging_schedule_period=[OcppChargingSchedulePeriod(start_period=0, limit=limit_watts)],
+                start_schedule=timestamp,
+                duration=int((segments[-1].end - anchor).total_seconds()),
+                absolute_price_schedule=OcppAbsolutePriceSchedule(
+                    time_anchor=timestamp,
+                    price_schedule_id=price_schedule_id,
+                    currency=PRICE_CURRENCY,
+                    language=PRICE_LANGUAGE,
+                    price_algorithm=PRICE_ALGORITHM,
+                    price_rule_stacks=stacks,
+                ),
+            )
+        ],
+    )

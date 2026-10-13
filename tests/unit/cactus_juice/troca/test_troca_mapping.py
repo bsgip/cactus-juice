@@ -1,13 +1,20 @@
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from assertical.fake.generator import generate_class_instance
 
 from cactus_juice.csipaus.dto import ActiveValues, ScheduledControlValues
+from cactus_juice.model import CSIPAusDynamicPrice
 from cactus_juice.troca.mapping import (
+    MAX_PRICE_RULE_STACKS,
     MAX_SCHEDULE_PERIODS,
     SCHEDULE_HORIZON,
+    PriceSegment,
+    dynamic_prices_to_segments,
     ocpp_profiles_match,
+    price_to_rational,
+    prices_to_ocpp_profile,
     rated_power_watts,
     reading_to_db,
     schedule_to_ocpp_profile,
@@ -27,6 +34,7 @@ from cactus_juice.troca.models import (
     OcppChargingProfilePurpose,
     OcppChargingSchedule,
     OcppChargingSchedulePeriod,
+    OcppRationalNumber,
     SchedulePeriod,
     SessionCommand,
     SessionData,
@@ -413,3 +421,155 @@ def _profile(start_mins: int, *periods: tuple[int, float, float | None], duratio
 )
 def test_ocpp_profiles_match(applied: OcppChargingProfile, desired: OcppChargingProfile, expected: bool):
     assert ocpp_profiles_match(applied, desired, NOW) is expected
+
+
+def price(
+    seed: int,
+    start_mins: int,
+    duration_mins: int,
+    price_kwh: str | None,
+    primacy: int = 0,
+    cancelled_mins: int | None = None,
+) -> CSIPAusDynamicPrice:
+    started_at = NOW + timedelta(minutes=start_mins)
+    return generate_class_instance(
+        CSIPAusDynamicPrice,
+        seed=seed,
+        csipaus_dynamic_price_id=seed,
+        primacy=primacy,
+        started_at=started_at,
+        duration_seconds=duration_mins * 60,
+        finished_at=started_at + timedelta(minutes=duration_mins),
+        cancelled_at=None if cancelled_mins is None else NOW + timedelta(minutes=cancelled_mins),
+        price_kwh=None if price_kwh is None else Decimal(price_kwh),
+    )
+
+
+def seg(start_mins: int, end_mins: int, price_kwh: str) -> PriceSegment:
+    return PriceSegment(NOW + timedelta(minutes=start_mins), NOW + timedelta(minutes=end_mins), Decimal(price_kwh))
+
+
+@pytest.mark.parametrize(
+    "prices, expected",
+    [
+        ([], []),
+        # Contiguous, keeping the start of a price already underway
+        ([price(1, -10, 30, "0.30"), price(2, 20, 30, "0.10")], [seg(-10, 20, "0.30"), seg(20, 50, "0.10")]),
+        # Finished prices are ignored and the next (future) run is used
+        ([price(1, -60, 30, "0.30"), price(2, 30, 30, "0.10")], [seg(30, 60, "0.10")]),
+        # A gap ends the run
+        ([price(1, 0, 30, "0.30"), price(2, 40, 30, "0.10")], [seg(0, 30, "0.30")]),
+        # Adjacent equal prices merge - prices without a value are ignored (creating a gap)
+        ([price(1, 0, 30, "0.30"), price(2, 30, 30, "0.3000"), price(3, 60, 30, None)], [seg(0, 60, "0.30")]),
+        # Overlaps - lowest primacy wins, the remainder of the other price still applies
+        (
+            [price(1, 0, 60, "0.30", primacy=5), price(2, 15, 15, "0.05", primacy=1)],
+            [seg(0, 15, "0.30"), seg(15, 30, "0.05"), seg(30, 60, "0.30")],
+        ),
+        # Same primacy - the overlapping prices sum
+        (
+            [price(1, 0, 60, "0.30"), price(2, 30, 60, "0.20")],
+            [seg(0, 30, "0.30"), seg(30, 60, "0.50"), seg(60, 90, "0.20")],
+        ),
+        (
+            [price(1, 0, 60, "0.10"), price(2, 0, 60, "0.05"), price(3, 0, 30, "-0.02")],
+            [seg(0, 30, "0.13"), seg(30, 60, "0.15")],
+        ),
+        # Summing only applies at the winning primacy - lower priority prices are still ignored
+        (
+            [
+                price(1, 0, 60, "0.10", primacy=1),
+                price(2, 0, 60, "0.05", primacy=1),
+                price(3, 0, 60, "9.99", primacy=2),
+            ],
+            [seg(0, 60, "0.15")],
+        ),
+        # Summing to an existing neighbour's price still merges
+        ([price(1, 0, 30, "0.30"), price(2, 30, 30, "0.10"), price(3, 30, 30, "0.20")], [seg(0, 60, "0.30")]),
+        # Cancelled prices end at their cancellation (or are ignored entirely if that's passed)
+        ([price(1, -10, 60, "0.30", cancelled_mins=20)], [seg(-10, 20, "0.30")]),
+        ([price(1, -10, 60, "0.30", cancelled_mins=-1)], []),
+        # Negative prices are fine
+        ([price(1, 0, 30, "-0.05")], [seg(0, 30, "-0.05")]),
+    ],
+)
+def test_dynamic_prices_to_segments(prices: list[CSIPAusDynamicPrice], expected: list[PriceSegment]):
+    assert dynamic_prices_to_segments(prices, NOW) == expected
+
+
+def test_dynamic_prices_to_segments_truncates():
+    prices = [price(i, i * 5, 5, str(i)) for i in range(MAX_PRICE_RULE_STACKS + 10)]
+    segments = dynamic_prices_to_segments(prices, NOW)
+    assert len(segments) == MAX_PRICE_RULE_STACKS
+    assert segments[-1] == seg(
+        (MAX_PRICE_RULE_STACKS - 1) * 5, MAX_PRICE_RULE_STACKS * 5, str(MAX_PRICE_RULE_STACKS - 1)
+    )
+
+
+@pytest.mark.parametrize(
+    "p, expected",
+    [
+        ("0.30", OcppRationalNumber(exponent=-1, value=3)),
+        ("0.3050", OcppRationalNumber(exponent=-3, value=305)),
+        ("-0.0125", OcppRationalNumber(exponent=-4, value=-125)),
+        ("0", OcppRationalNumber(exponent=0, value=0)),
+        ("10", OcppRationalNumber(exponent=0, value=10)),
+        ("12.5", OcppRationalNumber(exponent=-1, value=125)),
+    ],
+)
+def test_price_to_rational(p: str, expected: OcppRationalNumber):
+    actual = price_to_rational(Decimal(p))
+    assert actual == expected
+    assert Decimal(actual.value).scaleb(actual.exponent) == Decimal(p)
+
+
+def test_prices_to_ocpp_profile():
+    assert prices_to_ocpp_profile([], 9002, 0, OcppChargingProfilePurpose.TX_DEFAULT_PROFILE, 1e6, 1) is None
+
+    profile = prices_to_ocpp_profile(
+        [seg(-10, 20, "0.30"), seg(20, 80, "0.105")], 9002, 0, OcppChargingProfilePurpose.TX_DEFAULT_PROFILE, 1e6, 42
+    )
+    assert profile is not None
+    anchor = to_troca_timestamp(NOW - timedelta(minutes=10))
+    assert profile.to_dict() == {
+        "id": 9002,
+        "stackLevel": 0,
+        "chargingProfilePurpose": "TxDefaultProfile",
+        "chargingProfileKind": "Absolute",
+        "chargingSchedule": [
+            {
+                "id": 1,
+                "chargingRateUnit": "W",
+                "chargingSchedulePeriod": [{"startPeriod": 0, "limit": 1e6}],
+                "startSchedule": anchor,
+                "duration": 90 * 60,
+                "absolutePriceSchedule": {
+                    "timeAnchor": anchor,
+                    "priceScheduleID": 42,
+                    "currency": "AUD",
+                    "language": "en",
+                    "priceAlgorithm": "urn:iso:std:iso:15118:-20:PriceAlgorithm:1-Power",
+                    "priceRuleStacks": [
+                        {
+                            "duration": 30 * 60,
+                            "priceRule": [
+                                {
+                                    "energyFee": {"exponent": -1, "value": 3},
+                                    "powerRangeStart": {"exponent": 0, "value": 0},
+                                }
+                            ],
+                        },
+                        {
+                            "duration": 60 * 60,
+                            "priceRule": [
+                                {
+                                    "energyFee": {"exponent": -3, "value": 105},
+                                    "powerRangeStart": {"exponent": 0, "value": 0},
+                                }
+                            ],
+                        },
+                    ],
+                },
+            }
+        ],
+    }
