@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from cactus_juice.crud import SATEC_READING_VALUE_COLUMNS, fetch_satec_configs, insert_satec_readings
 from cactus_juice.db import DatabaseConnection
+from cactus_juice.error import PollError
 from cactus_juice.model import SatecConfig, SatecReading
 from cactus_juice.satec.meter import PROFILES, Reading, SatecMeter, build_client
 
@@ -136,7 +137,9 @@ async def run_polls(state: ClientState, min_wait: timedelta = timedelta(seconds=
     Returns the next "wakeup" time for the next set of polls.
 
     Will not poll meters that have been polled recently (per their own poll_rate_seconds). A failure polling
-    one meter is logged and does not prevent the others in the same call from being polled."""
+    one meter is logged and does not prevent the others in the same call from being polled - once they have all
+    run (and any successful readings written), any failures are raised as a single PollError (carrying the next
+    "wakeup" time)."""
 
     now = datetime.now(UTC)
 
@@ -149,12 +152,14 @@ async def run_polls(state: ClientState, min_wait: timedelta = timedelta(seconds=
         return max(state.next_poll(), datetime.now(UTC) + min_wait)
 
     readings: list[SatecReading] = []
+    failures: list[tuple[str, Exception]] = []
     for pm in due:
         try:
             reading = await asyncio.to_thread(poll_meter_sync, pm)
             readings.append(reading_to_model(pm.satec_config_id, reading))
-        except Exception:
+        except Exception as exc:
             logger.exception(f"Failed polling SatecConfig id={pm.satec_config_id}")
+            failures.append((f"Failed polling SatecConfig id={pm.satec_config_id}", exc))
         finally:
             pm.last_poll = now
 
@@ -164,7 +169,10 @@ async def run_polls(state: ClientState, min_wait: timedelta = timedelta(seconds=
             await insert_satec_readings(session, readings)
             await session.commit()
 
-    return max(state.next_poll(), datetime.now(UTC) + min_wait)
+    next_wake = max(state.next_poll(), datetime.now(UTC) + min_wait)
+    if failures:
+        raise PollError(failures, next_wake)
+    return next_wake
 
 
 async def close(state: ClientState) -> None:

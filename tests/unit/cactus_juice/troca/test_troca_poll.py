@@ -1,9 +1,11 @@
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from assertical.fake.generator import generate_class_instance
 
+from cactus_juice.error import PollError
 from cactus_juice.model import OCPPMetadata, OCPPReading
 from cactus_juice.troca import poll
 from cactus_juice.troca.client import TrocaApiError
@@ -323,3 +325,53 @@ async def test_poll_metadata_base_report_refused(metadata_client):
 
     assert client.base_reports == ["HALO"]
     assert [m.max_power_watts for m in upserted] == [40000, 40000]
+
+
+class FakeSession:
+    async def commit(self) -> None:
+        pass
+
+
+class FakeDatabaseConnection:
+    @asynccontextmanager
+    async def session_maker(self):
+        yield FakeSession()
+
+
+async def test_run_polls_raises_failures_after_running_every_poll(monkeypatch: pytest.MonkeyPatch):
+    """A failing poll shouldn't stop the others from running - but must still be raised so it gets reported"""
+    called: list[str] = []
+
+    def fake_poll(name: str, error: Exception | None = None):
+        async def _poll(state, session, now):
+            called.append(name)
+            if error is not None:
+                raise error
+
+        return _poll
+
+    monkeypatch.setattr(
+        poll, "poll_readings", fake_poll("readings", TrocaApiError(503, "GET", "/metering", "unavailable"))
+    )
+    monkeypatch.setattr(poll, "poll_metadata", fake_poll("metadata"))
+    monkeypatch.setattr(poll, "poll_schedules", fake_poll("schedules", ConnectionError()))
+    monkeypatch.setattr(poll, "poll_prices", fake_poll("prices"))
+
+    state = client_state(FakeTrocaClient())
+    state.db = FakeDatabaseConnection()  # ty: ignore[invalid-assignment]
+
+    with pytest.raises(PollError) as exc_info:
+        await poll.run_polls(state)
+
+    assert called == ["readings", "metadata", "schedules", "prices"]
+    assert [type(e) for _, e in exc_info.value.failures] == [TrocaApiError, ConnectionError]
+    assert "GET /metering -> 503: unavailable" in str(exc_info.value)
+    assert "ConnectionError" in str(exc_info.value)
+    assert exc_info.value.next_poll_at >= state.next_poll()
+    assert state.readings_poll.last_poll != POLL_EPOCH
+    assert state.schedule_poll.last_poll != POLL_EPOCH
+
+    # Nothing is due on an immediate re-run - so nothing can fail
+    called.clear()
+    await poll.run_polls(state)
+    assert called == []

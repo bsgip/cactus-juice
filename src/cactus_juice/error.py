@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import overload
 
 
@@ -31,3 +32,18 @@ class RemoteServiceError(BaseJuiceError):
     """There is an error in the remote service (perhaps it is returning invalid data)"""
 
     pass
+
+
+class PollError(BaseJuiceError):
+    """One or more polls in a run_polls call failed (the remaining polls in that call still ran).
+
+    The message summarises every failure (so it can be surfaced via TaskHealth) and next_poll_at is the wakeup
+    time run_polls would otherwise have returned - so callers can keep to the poll schedule despite the failure."""
+
+    failures: list[tuple[str, Exception]]  # (description of what failed, the exception raised)
+    next_poll_at: datetime
+
+    def __init__(self, failures: list[tuple[str, Exception]], next_poll_at: datetime) -> None:
+        super().__init__("; ".join(f"{label}: {str(exc) or type(exc).__name__}" for label, exc in failures))
+        self.failures = failures
+        self.next_poll_at = next_poll_at

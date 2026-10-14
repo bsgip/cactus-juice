@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 from cactus_juice.crud import fetch_troca_config, upsert_task_health
 from cactus_juice.db import DatabaseConnection
+from cactus_juice.error import PollError
 from cactus_juice.settings import CactusJuiceSettings
 from cactus_juice.troca.client import TrocaClient
 from cactus_juice.troca.models import ScheduleSyncMode
@@ -148,7 +149,13 @@ async def run_troca_client_task(settings: CactusJuiceSettings) -> None:
                     next_poll_at = datetime.now(UTC)  # Force an immediate poll against the new state
 
                 if state is not None and datetime.now(UTC) >= next_poll_at:
-                    next_poll_at = await run_polls(state)
+                    try:
+                        next_poll_at = await run_polls(state)
+                    except PollError as exc:
+                        # Some polls failed (and should be reported) - but the rest still ran, so keep to their
+                        # schedule rather than immediately retrying
+                        next_poll_at = exc.next_poll_at
+                        raise
             except Exception as exc:
                 logger.exception("Unhandled exception in Troca client task - will retry shortly.")
                 await _record_health(db, exc)

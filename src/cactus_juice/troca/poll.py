@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from cactus_juice.crud import add_ocpp_readings, upsert_ocpp_metadata
 from cactus_juice.db import DatabaseConnection
+from cactus_juice.error import PollError
 from cactus_juice.troca.client import TrocaApiError, TrocaClient
 from cactus_juice.troca.mapping import (
     DEFAULT_OCPP_EVSE_NB,
@@ -249,17 +250,20 @@ async def run_polls(state: ClientState, min_wait: timedelta = timedelta(seconds=
     Returns the next "wakeup" time for the next set of polls
 
     Will not poll/post resources that have been polled recently. A failure polling one resource is logged and
-    does not prevent the others in the same call from being polled."""
+    does not prevent the others in the same call from being polled - once they have all run, any failures are
+    raised as a single PollError (carrying the next "wakeup" time)."""
 
     now = datetime.now(UTC)
+    failures: list[tuple[str, Exception]] = []
 
     if poll_required(state.readings_poll, now):
         try:
             async with state.db.session_maker() as session:
                 await poll_readings(state, session, now)
                 await session.commit()
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed polling Troca readings.")
+            failures.append(("Failed polling Troca readings", exc))
         finally:
             state.readings_poll.last_poll = now
 
@@ -269,8 +273,9 @@ async def run_polls(state: ClientState, min_wait: timedelta = timedelta(seconds=
             async with state.db.session_maker() as session:
                 await poll_metadata(state, session, now)
                 await session.commit()
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed polling Troca session metadata.")
+            failures.append(("Failed polling Troca session metadata", exc))
         finally:
             state.metadata_poll.last_poll = now
 
@@ -279,18 +284,23 @@ async def run_polls(state: ClientState, min_wait: timedelta = timedelta(seconds=
             async with state.db.session_maker() as session:
                 await poll_schedules(state, session, now)
                 await session.commit()
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed polling/pushing the Troca charging schedule.")
+            failures.append(("Failed polling/pushing the Troca charging schedule", exc))
 
         # Prices share the schedule's poll rate - but a failure in one doesn't prevent the other
         try:
             async with state.db.session_maker() as session:
                 await poll_prices(state, session, now)
                 await session.commit()
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed pushing the Troca price schedule.")
+            failures.append(("Failed pushing the Troca price schedule", exc))
         finally:
             state.schedule_poll.last_poll = now
 
     # Figure out our next call to this function
-    return max(state.next_poll(), datetime.now(UTC) + min_wait)
+    next_wake = max(state.next_poll(), datetime.now(UTC) + min_wait)
+    if failures:
+        raise PollError(failures, next_wake)
+    return next_wake

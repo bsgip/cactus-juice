@@ -1,9 +1,12 @@
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from cactus_juice.error import PollError
 from cactus_juice.model import SatecConfig, SatecReading
+from cactus_juice.satec import client as satec_client
 from cactus_juice.satec.client import (
     MIN_DATE,
     READING_VALUE_COLUMNS,
@@ -202,3 +205,46 @@ def test_poll_meter_sync_closes_and_resets_on_sample_failure():
     assert pm.connected is False
     assert fake.close_calls == 1
     assert fake.connect_calls == 0  # it was already connected - no reconnect attempted this call
+
+
+class FakeSession:
+    async def commit(self) -> None:
+        pass
+
+
+class FakeDatabaseConnection:
+    @asynccontextmanager
+    async def session_maker(self):
+        yield FakeSession()
+
+
+async def test_run_polls_raises_failures_after_writing_successful_readings(monkeypatch: pytest.MonkeyPatch):
+    """A failing meter shouldn't stop the others from being polled/written - but must still be raised so it gets
+    reported"""
+    good = make_polled_meter(satec_config_id=1, last_poll=MIN_DATE, meter=FakeSatecMeter(sample_result=Reading(1.0, 1)))
+    bad = make_polled_meter(
+        satec_config_id=2, last_poll=MIN_DATE, meter=FakeSatecMeter(raise_on_sample=OSError("modbus timeout"))
+    )
+    state = ClientState(db=FakeDatabaseConnection(), meters={1: good, 2: bad})  # ty: ignore[invalid-argument-type]
+
+    inserted: list[SatecReading] = []
+
+    async def fake_fetch_satec_configs(session):
+        return []
+
+    async def fake_insert_satec_readings(session, readings):
+        inserted.extend(readings)
+
+    monkeypatch.setattr(satec_client, "fetch_satec_configs", fake_fetch_satec_configs)
+    monkeypatch.setattr(satec_client, "reconcile_meters", lambda state, configs: None)
+    monkeypatch.setattr(satec_client, "insert_satec_readings", fake_insert_satec_readings)
+
+    with pytest.raises(PollError) as exc_info:
+        await satec_client.run_polls(state)
+
+    assert [r.satec_config_id for r in inserted] == [1]
+    assert [type(e) for _, e in exc_info.value.failures] == [OSError]
+    assert "SatecConfig id=2" in str(exc_info.value)
+    assert "modbus timeout" in str(exc_info.value)
+    assert exc_info.value.next_poll_at >= state.next_poll()
+    assert bad.last_poll != MIN_DATE

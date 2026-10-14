@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 from cactus_juice.crud import upsert_task_health
 from cactus_juice.db import DatabaseConnection
+from cactus_juice.error import PollError
 from cactus_juice.satec.client import ClientState, close, run_polls
 from cactus_juice.settings import CactusJuiceSettings
 
@@ -72,7 +73,13 @@ async def run_satec_client_task(settings: CactusJuiceSettings) -> None:
         while not stop_event.is_set():
             try:
                 if datetime.now(UTC) >= next_poll_at:
-                    next_poll_at = await run_polls(state)
+                    try:
+                        next_poll_at = await run_polls(state)
+                    except PollError as exc:
+                        # Some polls failed (and should be reported) - but the rest still ran, so keep to their
+                        # schedule rather than immediately retrying
+                        next_poll_at = exc.next_poll_at
+                        raise
             except Exception as exc:
                 logger.exception("Unhandled exception in SATEC client task - will retry shortly.")
                 await _record_health(db, exc)
