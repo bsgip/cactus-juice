@@ -31,6 +31,7 @@ class PolledMeter:
     meter: SatecMeter
     last_poll: datetime = MIN_DATE
     connected: bool = False
+    last_error: Exception | None = None  # The exception from the most recent poll (None if it succeeded)
 
     @staticmethod
     def new_instance(config: SatecConfig) -> "PolledMeter":
@@ -131,6 +132,19 @@ def reading_to_model(satec_config_id: int, reading: Reading) -> SatecReading:
     )
 
 
+def _raise_if_failing(state: ClientState, next_wake: datetime) -> datetime:
+    """Raises a PollError (carrying next_wake) for every meter whose most recent poll failed, otherwise returns
+    next_wake as is."""
+    failures = [
+        (f"Failed polling SatecConfig id={pm.satec_config_id}", pm.last_error)
+        for pm in state.meters.values()
+        if pm.last_error is not None
+    ]
+    if failures:
+        raise PollError(failures, next_wake)
+    return next_wake
+
+
 async def run_polls(state: ClientState, min_wait: timedelta = timedelta(seconds=1)) -> datetime:
     """Runs every required poll of every registered SatecConfig, updating state as required.
 
@@ -138,8 +152,9 @@ async def run_polls(state: ClientState, min_wait: timedelta = timedelta(seconds=
 
     Will not poll meters that have been polled recently (per their own poll_rate_seconds). A failure polling
     one meter is logged and does not prevent the others in the same call from being polled - once they have all
-    run (and any successful readings written), any failures are raised as a single PollError (carrying the next
-    "wakeup" time)."""
+    run (and any successful readings written), a PollError (carrying the next "wakeup" time) is raised for every
+    meter whose most recent poll failed. This includes meters that weren't due during this call, so a failure keeps
+    being reported until that meter next polls successfully."""
 
     now = datetime.now(UTC)
 
@@ -149,17 +164,17 @@ async def run_polls(state: ClientState, min_wait: timedelta = timedelta(seconds=
 
     due = [pm for pm in state.meters.values() if poll_required(pm, now)]
     if not due:
-        return max(state.next_poll(), datetime.now(UTC) + min_wait)
+        return _raise_if_failing(state, max(state.next_poll(), datetime.now(UTC) + min_wait))
 
     readings: list[SatecReading] = []
-    failures: list[tuple[str, Exception]] = []
     for pm in due:
         try:
             reading = await asyncio.to_thread(poll_meter_sync, pm)
             readings.append(reading_to_model(pm.satec_config_id, reading))
+            pm.last_error = None
         except Exception as exc:
             logger.exception(f"Failed polling SatecConfig id={pm.satec_config_id}")
-            failures.append((f"Failed polling SatecConfig id={pm.satec_config_id}", exc))
+            pm.last_error = exc
         finally:
             pm.last_poll = now
 
@@ -169,10 +184,7 @@ async def run_polls(state: ClientState, min_wait: timedelta = timedelta(seconds=
             await insert_satec_readings(session, readings)
             await session.commit()
 
-    next_wake = max(state.next_poll(), datetime.now(UTC) + min_wait)
-    if failures:
-        raise PollError(failures, next_wake)
-    return next_wake
+    return _raise_if_failing(state, max(state.next_poll(), datetime.now(UTC) + min_wait))
 
 
 async def close(state: ClientState) -> None:

@@ -1,5 +1,6 @@
 import logging
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -74,6 +75,10 @@ class ClientState:
     ocpp_station_name: str | None = None
     ocpp_evse_nb: int | None = None
     evse_id: str | None = None
+
+    # The exception from the most recent attempt at each poll (keyed by a description of it) - an entry is only
+    # removed once that same poll next succeeds, so a failure continues to be reported (see run_polls) until then
+    failures: dict[str, Exception] = field(default_factory=dict)
 
     def next_poll(self) -> datetime:
         """Calculates the next moment a poll/post should occur."""
@@ -244,63 +249,55 @@ def poll_required(pollable: Pollable, now: datetime) -> bool:
     return now >= (pollable.last_poll + pollable.poll_rate)
 
 
+async def _run_poll(
+    state: ClientState,
+    label: str,
+    poll_fn: Callable[[ClientState, AsyncSession, datetime], Awaitable[None]],
+    now: datetime,
+) -> None:
+    """Runs poll_fn in its own db session, recording its outcome against label in state.failures. Exceptions are
+    logged rather than raised so that one failing poll doesn't prevent the others from running."""
+    try:
+        async with state.db.session_maker() as session:
+            await poll_fn(state, session, now)
+            await session.commit()
+    except Exception as exc:
+        logger.exception(f"{label}.")
+        state.failures[label] = exc
+    else:
+        state.failures.pop(label, None)
+
+
 async def run_polls(state: ClientState, min_wait: timedelta = timedelta(seconds=1)) -> datetime:
     """Runs every required poll of server, updating state as required. Will manage the creation of db sessions
 
     Returns the next "wakeup" time for the next set of polls
 
     Will not poll/post resources that have been polled recently. A failure polling one resource is logged and
-    does not prevent the others in the same call from being polled - once they have all run, any failures are
-    raised as a single PollError (carrying the next "wakeup" time)."""
+    does not prevent the others in the same call from being polled - once they have all run, a PollError (carrying
+    the next "wakeup" time) is raised for every poll whose most recent attempt failed. This includes polls that
+    weren't due during this call, so a failure keeps being reported until that poll next succeeds."""
 
     now = datetime.now(UTC)
-    failures: list[tuple[str, Exception]] = []
 
     if poll_required(state.readings_poll, now):
-        try:
-            async with state.db.session_maker() as session:
-                await poll_readings(state, session, now)
-                await session.commit()
-        except Exception as exc:
-            logger.exception("Failed polling Troca readings.")
-            failures.append(("Failed polling Troca readings", exc))
-        finally:
-            state.readings_poll.last_poll = now
+        await _run_poll(state, "Failed polling Troca readings", poll_readings, now)
+        state.readings_poll.last_poll = now
 
     # Metadata before schedules - the schedule can't be built until the EVSE's rated power is known
     if poll_required(state.metadata_poll, now):
-        try:
-            async with state.db.session_maker() as session:
-                await poll_metadata(state, session, now)
-                await session.commit()
-        except Exception as exc:
-            logger.exception("Failed polling Troca session metadata.")
-            failures.append(("Failed polling Troca session metadata", exc))
-        finally:
-            state.metadata_poll.last_poll = now
+        await _run_poll(state, "Failed polling Troca session metadata", poll_metadata, now)
+        state.metadata_poll.last_poll = now
 
     if poll_required(state.schedule_poll, now):
-        try:
-            async with state.db.session_maker() as session:
-                await poll_schedules(state, session, now)
-                await session.commit()
-        except Exception as exc:
-            logger.exception("Failed polling/pushing the Troca charging schedule.")
-            failures.append(("Failed polling/pushing the Troca charging schedule", exc))
+        await _run_poll(state, "Failed polling/pushing the Troca charging schedule", poll_schedules, now)
 
         # Prices share the schedule's poll rate - but a failure in one doesn't prevent the other
-        try:
-            async with state.db.session_maker() as session:
-                await poll_prices(state, session, now)
-                await session.commit()
-        except Exception as exc:
-            logger.exception("Failed pushing the Troca price schedule.")
-            failures.append(("Failed pushing the Troca price schedule", exc))
-        finally:
-            state.schedule_poll.last_poll = now
+        await _run_poll(state, "Failed pushing the Troca price schedule", poll_prices, now)
+        state.schedule_poll.last_poll = now
 
     # Figure out our next call to this function
     next_wake = max(state.next_poll(), datetime.now(UTC) + min_wait)
-    if failures:
-        raise PollError(failures, next_wake)
+    if state.failures:
+        raise PollError(list(state.failures.items()), next_wake)
     return next_wake

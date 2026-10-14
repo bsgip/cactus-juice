@@ -222,9 +222,8 @@ async def test_run_polls_raises_failures_after_writing_successful_readings(monke
     """A failing meter shouldn't stop the others from being polled/written - but must still be raised so it gets
     reported"""
     good = make_polled_meter(satec_config_id=1, last_poll=MIN_DATE, meter=FakeSatecMeter(sample_result=Reading(1.0, 1)))
-    bad = make_polled_meter(
-        satec_config_id=2, last_poll=MIN_DATE, meter=FakeSatecMeter(raise_on_sample=OSError("modbus timeout"))
-    )
+    bad_meter = FakeSatecMeter(raise_on_sample=OSError("modbus timeout"))
+    bad = make_polled_meter(satec_config_id=2, last_poll=MIN_DATE, meter=bad_meter)
     state = ClientState(db=FakeDatabaseConnection(), meters={1: good, 2: bad})  # ty: ignore[invalid-argument-type]
 
     inserted: list[SatecReading] = []
@@ -248,3 +247,16 @@ async def test_run_polls_raises_failures_after_writing_successful_readings(monke
     assert "modbus timeout" in str(exc_info.value)
     assert exc_info.value.next_poll_at >= state.next_poll()
     assert bad.last_poll != MIN_DATE
+
+    # Only the good meter is due (and succeeds) - the bad meter's failure is still outstanding
+    good.last_poll = MIN_DATE
+    with pytest.raises(PollError, match="modbus timeout"):
+        await satec_client.run_polls(state)
+    assert [r.satec_config_id for r in inserted] == [1, 1]
+
+    # Once the bad meter succeeds, the failure is cleared
+    bad_meter.raise_on_sample = None
+    bad_meter.sample_result = Reading(2.0, 2)
+    bad.last_poll = MIN_DATE
+    await satec_client.run_polls(state)
+    assert bad.last_error is None

@@ -152,10 +152,14 @@ async def run_troca_client_task(settings: CactusJuiceSettings) -> None:
                     try:
                         next_poll_at = await run_polls(state)
                     except PollError as exc:
-                        # Some polls failed (and should be reported) - but the rest still ran, so keep to their
-                        # schedule rather than immediately retrying
+                        # Some polls are failing (and should be reported) - but the rest still ran, so keep to
+                        # their schedule rather than immediately retrying
                         next_poll_at = exc.next_poll_at
                         raise
+            except PollError as exc:
+                # Each underlying failure was already logged (with traceback) by run_polls when it occurred
+                logger.warning(f"Troca client task has failing polls - will retry on schedule: {exc}")
+                await _record_health(db, exc)
             except Exception as exc:
                 logger.exception("Unhandled exception in Troca client task - will retry shortly.")
                 await _record_health(db, exc)

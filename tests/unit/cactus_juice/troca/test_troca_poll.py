@@ -371,7 +371,47 @@ async def test_run_polls_raises_failures_after_running_every_poll(monkeypatch: p
     assert state.readings_poll.last_poll != POLL_EPOCH
     assert state.schedule_poll.last_poll != POLL_EPOCH
 
-    # Nothing is due on an immediate re-run - so nothing can fail
+
+async def test_run_polls_keeps_reporting_failure_until_that_poll_succeeds(monkeypatch: pytest.MonkeyPatch):
+    """Regression - a failing (slow cadence) metadata poll must still be reported by subsequent calls where only
+    other polls (eg readings) were due and succeeded, otherwise the task health immediately flips back to healthy"""
+    metadata_error: Exception | None = TrocaApiError(504, "POST", "/SetVariables", "Gateway Time-out")
+    called: list[str] = []
+
+    async def poll_readings(state, session, now):
+        called.append("readings")
+
+    async def poll_metadata(state, session, now):
+        called.append("metadata")
+        if metadata_error is not None:
+            raise metadata_error
+
+    async def noop(state, session, now):
+        pass
+
+    monkeypatch.setattr(poll, "poll_readings", poll_readings)
+    monkeypatch.setattr(poll, "poll_metadata", poll_metadata)
+    monkeypatch.setattr(poll, "poll_schedules", noop)
+    monkeypatch.setattr(poll, "poll_prices", noop)
+
+    state = client_state(FakeTrocaClient())
+    state.db = FakeDatabaseConnection()  # ty: ignore[invalid-assignment]
+
+    with pytest.raises(PollError, match="Gateway Time-out"):
+        await poll.run_polls(state)
+    assert called == ["readings", "metadata"]
+
+    # Only readings are due (and succeed) - the metadata failure is still outstanding
     called.clear()
+    state.readings_poll.last_poll = POLL_EPOCH
+    with pytest.raises(PollError, match="Gateway Time-out"):
+        await poll.run_polls(state)
+    assert called == ["readings"]
+
+    # Once metadata succeeds, the failure is cleared
+    called.clear()
+    metadata_error = None
+    state.metadata_poll.last_poll = POLL_EPOCH
     await poll.run_polls(state)
-    assert called == []
+    assert called == ["metadata"]
+    assert state.failures == {}
