@@ -40,6 +40,7 @@ from envoy_schema.server.schema.sep2.types import (
     ServiceKind,
     UomType,
 )
+from pydantic_xml import attr
 
 from cactus_juice.csipaus.dto import DefaultValues
 from cactus_juice.error import BaseJuiceError
@@ -51,6 +52,14 @@ from cactus_juice.model import (
     OCPPMetadata,
     OCPPReading,
 )
+
+
+class MirrorMeterReadingListWithCountsRequest(MirrorMeterReadingListRequest, tag="MirrorMeterReadingList"):
+    """envoy-schema omits all/results on MirrorMeterReadingList POSTs"""
+
+    all_: int = attr(name="all")
+    results: int = attr()
+
 
 SUPPORTED_READING_TYPES = [
     CSIPAusReadingType.ActivePowerAverage,
@@ -387,7 +396,7 @@ def ocpp_readings_to_submit_mmr(
     all_readings: Sequence[OCPPReading],
     site_mrids: MirrorUsagePointMrids,
     device_mrids: MirrorUsagePointMrids,
-) -> tuple[MirrorMeterReadingListRequest | None, MirrorMeterReadingListRequest | None]:
+) -> tuple[MirrorMeterReadingListWithCountsRequest | None, MirrorMeterReadingListWithCountsRequest | None]:
     """Given a set of database readings - convert them to a site / device level MUP submission
 
     returns [site_mmr_list, device_mmr_list]"""
@@ -421,7 +430,12 @@ def ocpp_readings_to_submit_mmr(
         return (None, None)
     else:
         # We dont map device level readings
-        return (MirrorMeterReadingListRequest(mirrorMeterReadings=site_mmrs), None)
+        return (
+            MirrorMeterReadingListWithCountsRequest(
+                all_=len(site_mmrs), results=len(site_mmrs), mirrorMeterReadings=site_mmrs
+            ),
+            None,
+        )
 
 
 def default_dercontrols_to_values(dderc_primacy_vals: Iterable[tuple[int, DefaultDERControl]]) -> DefaultValues:

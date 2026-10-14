@@ -52,6 +52,7 @@ from cactus_juice.csipaus.mapping import (
     sep2_to_value,
     value_to_sep2,
 )
+from cactus_juice.csipaus.server import resource_to_sep2_xml
 from cactus_juice.error import BaseJuiceError
 from cactus_juice.model import CSIPAusControl, CSIPAusControlResponse, OCPPMetadata, OCPPReading
 
@@ -614,6 +615,11 @@ def test_ocpp_readings_to_submit_mmr_averages_and_shape():
     assert device is None, "device level readings are never mapped"
     assert isinstance(site, MirrorMeterReadingListRequest)
     assert site.mirrorMeterReadings is not None
+    assert site.all_ == len(site.mirrorMeterReadings)
+    assert site.results == len(site.mirrorMeterReadings)
+    site_xml = resource_to_sep2_xml(site)
+    assert f'all="{site.all_}"' in site_xml
+    assert f'results="{site.results}"' in site_xml
 
     by_mrid = {mmr.mRID: mmr for mmr in site.mirrorMeterReadings}
     active = by_mrid[mrids.mmr_mrids[CSIPAusReadingType.ActivePowerAverage]]
