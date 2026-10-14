@@ -329,6 +329,14 @@ class TrocaClient:
         path = f"/{target.connector_name}/ocpp/{target.ocpp_version}/command/{message_type}/{target.station_name}"
         return await self._post(path, {"payload": payload})
 
+    async def get_base_report(self, target: OcppTarget, request_id: int, report_base: str) -> str:
+        """OCPP 2.x GetBaseReport via the passthrough - returns the station's response status (eg Accepted). The
+        report itself is sent by the station to Troca (not us) - it's what populates Troca's structure data."""
+        response = await self.send_ocpp_command(
+            target, "GetBaseReport", {"requestId": request_id, "reportBase": report_base}
+        )
+        return (response or {}).get("status", "")
+
     async def get_variables(self, target: OcppTarget, requests: list[GetVariableData]) -> list[GetVariableResult]:
         """OCPP 2.x GetVariables via the passthrough."""
         response = await self.send_ocpp_command(

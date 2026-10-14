@@ -210,12 +210,17 @@ class EvseUid(TrocaModel):
 
 @dataclass(frozen=True)
 class Evse(TrocaModel):
-    """``EvseData`` schema, as returned by ``GET /structure/evses``. Carries no electrical ratings - those are
-    only available by asking the station directly via the OCPP passthrough (GetVariables)."""
+    """``EvseData`` schema, as returned by ``GET /structure/evses``.
+
+    The (kW) ratings come from the max/minLimit of the EVSE's Power variable in the station's last device model
+    report (GetBaseReport) - they're absent if the station doesn't report that variable (eg the Trialog simulator)
+    or hasn't sent a report since Troca started recording them (2026-10)."""
 
     evse_id: str = field(metadata={"alias": "evseId"})
     evse_uid: EvseUid | None = field(default=None, metadata={"alias": "evseUid"})
     name: str | None = None
+    max_charge_power: float | None = field(default=None, metadata={"alias": "maxChargePower"})
+    max_discharge_power: float | None = field(default=None, metadata={"alias": "maxDischargePower"})
     issuer_id: str | None = field(default=None, metadata={"alias": "issuerId"})
     created_at: str | None = field(default=None, metadata={"alias": "createdAt"})
     last_updated: str | None = field(default=None, metadata={"alias": "lastUpdated"})

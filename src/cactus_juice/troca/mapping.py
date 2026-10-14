@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -8,6 +8,7 @@ from cactus_juice.model import CSIPAusDynamicPrice, OCPPMetadata, OCPPReading
 from cactus_juice.troca.models import (
     ActivePowerSchedule,
     Bounds,
+    Evse,
     GetVariableData,
     GetVariableResult,
     MeteringReading,
@@ -21,6 +22,7 @@ from cactus_juice.troca.models import (
     OcppPriceRule,
     OcppPriceRuleStack,
     OcppRationalNumber,
+    OcppTarget,
     OcppVariable,
     SchedulePeriod,
     TEmsValue,
@@ -158,6 +160,38 @@ def variables_to_metadata(results: Sequence[GetVariableResult]) -> OCPPMetadata 
         max_power_watts=max_power_watts,
         max_charge_rate_watts=None,
         max_discharge_rate_watts=None,
+        set_grad_w=None,
+    )
+
+
+def find_evse(evses: Iterable[Evse], target: OcppTarget, evse_nb: int, evse_id: str | None = None) -> Evse | None:
+    """Finds the Troca EVSE being controlled - by evse_id (Troca's UUID) if set, otherwise by the target station's
+    name and evse_nb."""
+    for e in evses:
+        if evse_id is not None:
+            if e.evse_id == evse_id:
+                return e
+        elif e.evse_uid is not None and (e.evse_uid.station_name, e.evse_uid.evse_nb) == (target.station_name, evse_nb):
+            return e
+    return None
+
+
+def evse_to_metadata(evse: Evse) -> OCPPMetadata | None:
+    """Maps the (kW) ratings Troca reports on an EVSE into an OCPPMetadata snapshot (or None if it has none). The
+    EVSE's overall rated power is taken as the larger of its charge/discharge ratings."""
+
+    charge_watts = None if evse.max_charge_power is None else evse.max_charge_power * 1000
+    discharge_watts = None if evse.max_discharge_power is None else evse.max_discharge_power * 1000
+    ratings = [w for w in (charge_watts, discharge_watts) if w is not None and w > 0]
+    if not ratings:
+        return None
+
+    return OCPPMetadata(
+        max_voltage_volts=None,
+        min_voltage_volts=None,
+        max_power_watts=max(ratings),
+        max_charge_rate_watts=charge_watts,
+        max_discharge_rate_watts=discharge_watts,
         set_grad_w=None,
     )
 

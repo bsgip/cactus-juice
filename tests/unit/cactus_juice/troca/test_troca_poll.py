@@ -4,15 +4,21 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from assertical.fake.generator import generate_class_instance
 
-from cactus_juice.model import OCPPReading
+from cactus_juice.model import OCPPMetadata, OCPPReading
 from cactus_juice.troca import poll
+from cactus_juice.troca.client import TrocaApiError
 from cactus_juice.troca.mapping import to_troca_timestamp
 from cactus_juice.troca.models import (
     Connector,
     ConnectorType,
+    Evse,
+    EvseUid,
+    GetVariableResult,
     LocationId,
     MeteringReading,
+    OcppComponent,
     OcppTarget,
+    OcppVariable,
     ScheduleSyncMode,
     Station,
     StructureLevel,
@@ -35,6 +41,8 @@ class FakeTrocaClient:
     connectors: list[Connector] = field(default_factory=list)
     stations: list[Station] = field(default_factory=list)
     metering_data: list[MeteringReading] = field(default_factory=list)
+    evses: list[Evse] = field(default_factory=list)
+    base_reports: list[str] = field(default_factory=list)  # The station of each GetBaseReport request
     metering_queries: list[dict] = field(default_factory=list)
 
     async def get_connectors(self) -> list[Connector]:
@@ -42,6 +50,13 @@ class FakeTrocaClient:
 
     async def get_stations(self) -> list[Station]:
         return self.stations
+
+    async def get_evses(self) -> list[Evse]:
+        return self.evses
+
+    async def get_base_report(self, target: OcppTarget, request_id: int, report_base: str) -> str:
+        self.base_reports.append(target.station_name)
+        return "Accepted"
 
     async def get_metering_data(self, **kwargs) -> list[MeteringReading]:
         self.metering_queries.append(kwargs)
@@ -223,3 +238,88 @@ async def test_poll_readings_only_requests_new(monkeypatch: pytest.MonkeyPatch):
     await poll.poll_readings(state, None, NOW)  # ty: ignore[invalid-argument-type]
     assert client.metering_queries[-1] == {"after": NOW + timedelta(seconds=20), "orderby": "timestamp"}
     assert state.last_reading_at == NOW + timedelta(seconds=20)
+
+
+def evse(station_name: str, max_charge_kw: float | None, max_discharge_kw: float | None) -> Evse:
+    return generate_class_instance(
+        Evse,
+        evse_uid=EvseUid(station_name=station_name, evse_nb=1),
+        max_charge_power=max_charge_kw,
+        max_discharge_power=max_discharge_kw,
+    )
+
+
+@pytest.fixture
+def metadata_client(monkeypatch: pytest.MonkeyPatch) -> tuple[FakeTrocaClient, list[OCPPMetadata], list[str]]:
+    """A client for poll_metadata - returns (client, every upserted metadata, every GetVariables station)"""
+    upserted: list[OCPPMetadata] = []
+    get_variables_calls: list[str] = []
+
+    async def configure_metering(client, target):
+        pass
+
+    async def upsert_ocpp_metadata(session, metadata):
+        upserted.append(metadata)
+
+    monkeypatch.setattr(poll, "configure_metering", configure_metering)
+    monkeypatch.setattr(poll, "upsert_ocpp_metadata", upsert_ocpp_metadata)
+
+    client = FakeTrocaClient([connector("qocppConnector2.1")], [station("HALO")])
+
+    async def get_variables(target, requests):
+        get_variables_calls.append(target.station_name)
+        return [
+            GetVariableResult(
+                attribute_status="Accepted",
+                component=OcppComponent(name="ElectricalFeed"),
+                variable=OcppVariable(name="Power"),
+                attribute_value="40",
+            )
+        ]
+
+    client.get_variables = get_variables  # ty: ignore[unresolved-attribute]
+    return client, upserted, get_variables_calls
+
+
+async def test_poll_metadata_from_evse_ratings(metadata_client):
+    client, upserted, get_variables_calls = metadata_client
+    client.evses = [evse("OTHER", 22, 22), evse("HALO", 7.4, 7.4)]
+
+    await poll.poll_metadata(client_state(client), None, NOW)  # ty: ignore[invalid-argument-type]
+
+    assert [(m.max_power_watts, m.max_charge_rate_watts, m.max_discharge_rate_watts) for m in upserted] == [
+        (7400, 7400, 7400)
+    ]
+    assert get_variables_calls == [] and client.base_reports == []
+
+
+async def test_poll_metadata_falls_back_to_station(metadata_client):
+    """Without EVSE ratings, the station is asked for its report (once) and its rated power directly"""
+    client, upserted, get_variables_calls = metadata_client
+    client.evses = [evse("HALO", None, None)]
+    state = client_state(client)
+
+    await poll.poll_metadata(state, None, NOW)  # ty: ignore[invalid-argument-type]
+    await poll.poll_metadata(state, None, NOW)  # ty: ignore[invalid-argument-type]
+
+    assert client.base_reports == ["HALO"]
+    assert get_variables_calls == ["HALO", "HALO"]
+    assert [m.max_power_watts for m in upserted] == [40000, 40000]
+
+
+async def test_poll_metadata_base_report_refused(metadata_client):
+    """A station that refuses GetBaseReport still has its rated power requested directly"""
+    client, upserted, get_variables_calls = metadata_client
+
+    async def get_base_report(target, request_id, report_base):
+        client.base_reports.append(target.station_name)
+        raise TrocaApiError(502, "POST", "/GetBaseReport", "CallError")
+
+    client.get_base_report = get_base_report
+    state = client_state(client)
+
+    await poll.poll_metadata(state, None, NOW)  # ty: ignore[invalid-argument-type]
+    await poll.poll_metadata(state, None, NOW)  # ty: ignore[invalid-argument-type]
+
+    assert client.base_reports == ["HALO"]
+    assert [m.max_power_watts for m in upserted] == [40000, 40000]

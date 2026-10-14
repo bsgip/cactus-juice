@@ -12,6 +12,8 @@ from cactus_juice.troca.mapping import (
     SCHEDULE_HORIZON,
     PriceSegment,
     dynamic_prices_to_segments,
+    evse_to_metadata,
+    find_evse,
     ocpp_profiles_match,
     price_to_rational,
     prices_to_ocpp_profile,
@@ -28,6 +30,8 @@ from cactus_juice.troca.mapping import (
 from cactus_juice.troca.models import (
     ActivePowerSchedule,
     Bounds,
+    Evse,
+    EvseUid,
     GetVariableResult,
     MeteringReading,
     OcppChargingProfile,
@@ -35,6 +39,7 @@ from cactus_juice.troca.models import (
     OcppChargingSchedule,
     OcppChargingSchedulePeriod,
     OcppRationalNumber,
+    OcppTarget,
     SchedulePeriod,
     SessionCommand,
     SessionData,
@@ -573,3 +578,39 @@ def test_prices_to_ocpp_profile():
             }
         ],
     }
+
+
+def test_find_evse():
+    target = OcppTarget("qocppConnector2.1", "2.1", "HALO")
+    evses = [
+        generate_class_instance(Evse, seed=1, evse_id="a", evse_uid=EvseUid(station_name="HALO", evse_nb=2)),
+        generate_class_instance(Evse, seed=2, evse_id="b", evse_uid=EvseUid(station_name="OTHER", evse_nb=1)),
+        generate_class_instance(Evse, seed=3, evse_id="c", evse_uid=EvseUid(station_name="HALO", evse_nb=1)),
+        generate_class_instance(Evse, seed=4, evse_id="d", evse_uid=None),
+    ]
+    assert find_evse(evses, target, 1) is evses[2]
+    assert find_evse(evses, target, 2) is evses[0]
+    assert find_evse(evses, target, 3) is None
+    assert find_evse(evses, target, 1, evse_id="b") is evses[1]
+    assert find_evse(evses, target, 1, evse_id="unknown") is None
+
+
+@pytest.mark.parametrize(
+    "charge_kw, discharge_kw, expected",
+    [
+        (7.4, 7.4, (7400, 7400, 7400)),
+        (11, 5, (11000, 11000, 5000)),
+        (None, 5, (5000, None, 5000)),
+        (7, None, (7000, 7000, None)),
+        (None, None, None),
+        (0, 0, None),
+    ],
+)
+def test_evse_to_metadata(charge_kw: float | None, discharge_kw: float | None, expected: tuple | None):
+    evse = generate_class_instance(Evse, max_charge_power=charge_kw, max_discharge_power=discharge_kw)
+    metadata = evse_to_metadata(evse)
+    if expected is None:
+        assert metadata is None
+    else:
+        assert metadata is not None
+        assert (metadata.max_power_watts, metadata.max_charge_rate_watts, metadata.max_discharge_rate_watts) == expected

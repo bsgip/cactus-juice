@@ -6,9 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from cactus_juice.crud import add_ocpp_readings, upsert_ocpp_metadata
 from cactus_juice.db import DatabaseConnection
-from cactus_juice.troca.client import TrocaClient
+from cactus_juice.troca.client import TrocaApiError, TrocaClient
 from cactus_juice.troca.mapping import (
     DEFAULT_OCPP_EVSE_NB,
+    evse_to_metadata,
+    find_evse,
     rated_power_variables,
     reading_to_db,
     variables_to_metadata,
@@ -31,6 +33,10 @@ logger = logging.getLogger(__name__)
 POLL_EPOCH = datetime.min.replace(tzinfo=UTC)
 
 DEFAULT_SCHEDULE_SYNC_MODE = ScheduleSyncMode.OCPP
+
+# GetBaseReport request (see poll_metadata) - the requestId only matters for correlating the station's report
+BASE_REPORT_REQUEST_ID = 4101
+BASE_REPORT_TYPE = "FullInventory"
 
 
 @dataclass(slots=True)
@@ -59,6 +65,7 @@ class ClientState:
     pushed_profile: PushedProfile | None = None  # What was last pushed to the station (ScheduleSyncMode.OCPP only)
     pushed_prices: PushedPrices | None = None  # The dynamic prices last pushed to the station
     metering_configured_station: str | None = None  # The station whose sampled meter values were last configured
+    base_report_requested_station: str | None = None  # The station last asked to resend its device model report
 
     # Configured values that would otherwise be discovered via the Troca API (None = discover on each poll)
     ocpp_connector_name: str | None = None
@@ -163,8 +170,13 @@ async def poll_readings(state: ClientState, session: AsyncSession, now: datetime
 
 
 async def poll_metadata(state: ClientState, session: AsyncSession, now: datetime) -> None:
-    """Asks the charging station directly (via Troca's OCPP passthrough) for its rated power and updates the DB
-    with the latest values. The first poll of a station also configures which meter values it samples."""
+    """Updates the DB with the latest rated power of the EVSE. The first poll of a station also configures which
+    meter values it samples.
+
+    The ratings Troca reports on the EVSE (from the station's device model report) are preferred. If they're
+    missing, the station is asked (once) to resend its report - and in the meantime the station is asked directly
+    (via the OCPP passthrough) for its rated power. Some stations (eg the Trialog simulator) never report ratings
+    to Troca, so the direct request is all that will ever work for them."""
 
     target = await resolve_ocpp_target(state)
     if target is None:
@@ -175,13 +187,31 @@ async def poll_metadata(state: ClientState, session: AsyncSession, now: datetime
         state.metering_configured_station = target.station_name
 
     evse_nb = state.ocpp_evse_nb if state.ocpp_evse_nb is not None else DEFAULT_OCPP_EVSE_NB
-    results = await state.client.get_variables(target, rated_power_variables(evse_nb))
-    metadata = variables_to_metadata(results)
+    evse = find_evse(await state.client.get_evses(), target, evse_nb, state.evse_id)
+    metadata = None if evse is None else evse_to_metadata(evse)
+
     if metadata is None:
-        logger.warning(f"Station {target.station_name} didn't report a usable rated power: {results}")
-        return
+        if state.base_report_requested_station != target.station_name:
+            await request_base_report(state.client, target)
+            state.base_report_requested_station = target.station_name
+
+        results = await state.client.get_variables(target, rated_power_variables(evse_nb))
+        metadata = variables_to_metadata(results)
+        if metadata is None:
+            logger.warning(f"Station {target.station_name} didn't report a usable rated power: {results}")
+            return
 
     await upsert_ocpp_metadata(session, metadata)
+
+
+async def request_base_report(client: TrocaClient, target: OcppTarget) -> None:
+    """Asks the station to resend its device model report to Troca. Not every station supports this - a refusal
+    is logged (rather than raised) as the rated power can still be requested directly from the station."""
+    try:
+        status = await client.get_base_report(target, BASE_REPORT_REQUEST_ID, BASE_REPORT_TYPE)
+        logger.info(f"Requested a {BASE_REPORT_TYPE} report from station {target.station_name}: {status}")
+    except TrocaApiError as exc:
+        logger.warning(f"Station {target.station_name} didn't accept GetBaseReport: {exc}")
 
 
 async def poll_schedules(state: ClientState, session: AsyncSession, now: datetime) -> None:
