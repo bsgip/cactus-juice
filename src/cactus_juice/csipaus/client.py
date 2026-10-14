@@ -326,6 +326,7 @@ async def in_band_register(state: ClientState, end_device_list_href: str) -> End
             )
 
     # Mark certain resources as requiring an update after we register an EndDevice
+    state.derl_last_change_time = None
     if state.derl:
         state.derl.last_poll = MIN_DATE
     if state.mupl:
@@ -362,12 +363,16 @@ async def poll_end_device_list(state: ClientState, now: datetime) -> None:
     )
     if existing_edev is None:
         existing_edev = await in_band_register(state, state.edevl.href)
+        state.derl_last_change_time = None  # A new DERList needs the current metadata, even if it hasn't changed
 
     # Update the state
     state.edevl = upsert_poll_rate(state.edevl, state.edevl.href, edevl_response.poll_rate_seconds, state.dcap)
     state.edev_href = existing_edev.href
     state.fsal = upsert_href(state.fsal, existing_edev.FunctionSetAssignmentsListLink)
-    state.derl = upsert_href(state.derl, existing_edev.DERListLink)
+    new_derl = upsert_href(state.derl, existing_edev.DERListLink)
+    if new_derl is not state.derl:
+        state.derl_last_change_time = None  # If the DERList has changed - mark it as requiring an update
+    state.derl = new_derl
     state.edevl.last_poll = now
 
 
