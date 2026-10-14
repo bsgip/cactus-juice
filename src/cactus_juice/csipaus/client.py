@@ -405,6 +405,10 @@ async def poll_mup_list(state: ClientState, now: datetime) -> None:
         logger.info(f"Created Site MUP {mup_href} with mRID {state.mup_site_mrids.mup_mrid}")
         site_mup = await get_resource(MirrorUsagePoint, state.context.http, mup_href)
         state.mup_href_by_location[CSIPAusReadingLocation.Site] = mup_href
+    elif site_mup.href:
+        state.mup_href_by_location[CSIPAusReadingLocation.Site] = site_mup.href
+    else:
+        logger.warning(f"Existing Site MUP with mRID {site_mup.mRID} has no href. Unable to post readings to it.")
 
     device_mup = first_matching_caseless(
         mups.items, state.mup_device_mrids.mup_mrid, lambda mup: cast(MirrorUsagePoint, mup).mRID
@@ -419,6 +423,10 @@ async def poll_mup_list(state: ClientState, now: datetime) -> None:
         logger.info(f"Created Device MUP {mup_href} with mRID {state.mup_device_mrids.mup_mrid}")
         device_mup = await get_resource(MirrorUsagePoint, state.context.http, mup_href)
         state.mup_href_by_location[CSIPAusReadingLocation.Device] = mup_href
+    elif device_mup.href:
+        state.mup_href_by_location[CSIPAusReadingLocation.Device] = device_mup.href
+    else:
+        logger.warning(f"Existing Device MUP with mRID {device_mup.mRID} has no href. Unable to post readings to it.")
 
     # Update state
     state.mupl = upsert_poll_rate(state.mupl, state.mupl.href, mups.poll_rate_seconds, state.dcap)
