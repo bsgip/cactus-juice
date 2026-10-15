@@ -137,10 +137,45 @@ cd ~/cactus-juice
 podman build -t cactus-orchestrator:plugfest_latest --build-arg CACTUS_ORCHESTRATOR_VERSION="plugfest" --build-arg GITHUB_ORG="bsgip" "./deploy/docker/cactus-orchestrator" --no-cache
 ```
 
+
+
+
+
 ## Start services
 As cactus:
 ```
 cd ~/cactus-juice/deploy/server
 ./update.sh
 ./update-juice.sh
+```
+
+## Updating Orchestrator Test Definitions
+
+**Only required when changing test definitions**
+
+### Change Test Definitions
+**On your dev machine**
+
+* Update [cactus-test-definitions](https://github.com/bsgip/cactus-test-definitions) 
+* Use the `plugfest_definitions` branch
+* No tagging required - just push to the head of the `plugfest_definitions` branch
+
+### Update Orchestrator Repo
+**On your dev machine**
+* Update [cactus-orchestrator](https://github.com/bsgip/cactus-orchestrator)
+* Use the `plugfest` branch
+* The repo is already having `pyproject.toml` reference the above `cactus-test-definitions` branch - you just need to update the `uv.lock` file
+* `uv lock --upgrade-package cactus-test-definitions`
+* The `uv.lock` should be updated to the latest commit ID in `cactus-test-definitions`
+* Commit and push the `cactus-orchestrator` changes (should just be `uv.lock`)
+
+### Deploy Changes
+**On plugfest-pc**
+
+```
+cd ~/cactus-juice
+podman build -t cactus-orchestrator:plugfest_latest --build-arg CACTUS_ORCHESTRATOR_VERSION="plugfest" --build-arg GITHUB_ORG="bsgip" "./deploy/docker/cactus-orchestrator" --no-cache
+
+cd ~/cactus-juice/deploy/server
+./update.sh
 ```
