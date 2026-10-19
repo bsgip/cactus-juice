@@ -3,7 +3,8 @@ an OCPP TxProfile for the active session's transaction.
 
 This has been superseded by ocpp_schedule (see ScheduleSyncMode in poll.py) but is retained in case we need to
 switch back. Its main limitation is that Troca only accepts fixed setpoints (not limits) - see
-mapping.values_to_charge_watts for how CSIP-Aus limits are approximated."""
+mapping.values_to_charge_watts for how CSIP-Aus limits are approximated. Being setpoint based, it does support
+storage_target_watts (ie a discharge setpoint) - which ocpp_schedule doesn't (yet)."""
 
 import logging
 from collections.abc import Iterable

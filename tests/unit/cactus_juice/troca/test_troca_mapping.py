@@ -77,6 +77,19 @@ def scv(start_mins: int, end_mins: int | None, v: ActiveValues) -> ScheduledCont
         (values(import_limit_watts=7000, connect=False), 0),
         (values(import_limit_watts=7000, energize=False), 0),
         (values(import_limit_watts=7000, connect=True, energize=True), 7000),
+        # storage_target_watts is export positive and takes precedence
+        (values(storage_target_watts=5000), -5000),
+        (values(storage_target_watts=5000, import_limit_watts=7000), -5000),
+        (values(storage_target_watts=99000), -MAX_POWER),
+        (values(storage_target_watts=5000, export_limit_watts=3000), -3000),
+        (values(storage_target_watts=5000, export_limit_watts=4000, generation_limit_watts=2000), -2000),
+        (values(storage_target_watts=5000, export_limit_watts=0), 0),
+        (values(storage_target_watts=-5000), 5000),
+        (values(storage_target_watts=-5000, import_limit_watts=3000, export_limit_watts=0), 3000),
+        (values(storage_target_watts=-5000, load_limit_watts=1000), 1000),
+        (values(storage_target_watts=0, import_limit_watts=7000), 0),
+        (values(storage_target_watts=5000, connect=False), 0),
+        (values(storage_target_watts=5000, energize=False), 0),
     ],
 )
 def test_values_to_charge_watts(v: ActiveValues, expected: float):

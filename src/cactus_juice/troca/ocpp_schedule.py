@@ -9,6 +9,7 @@ Trialog simulator's GetCompositeSchedule always reports 0W - so instead we remem
 periodically re-push it (SetChargingProfile with the same id is idempotent, replacing the existing profile)."""
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -16,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from cactus_juice.crud import fetch_ocpp_metadata
 from cactus_juice.csipaus.controls import calculate_schedule_values
+from cactus_juice.csipaus.dto import ScheduledControlValues
 from cactus_juice.troca.client import TrocaClient
 from cactus_juice.troca.mapping import ocpp_profiles_match, schedule_to_ocpp_profile
 from cactus_juice.troca.models import OcppChargingProfile, OcppChargingProfilePurpose, OcppTarget
@@ -71,6 +73,29 @@ def requires_push(last: PushedProfile | None, desired: OcppChargingProfile | Non
     return age >= REFRESH_INTERVAL
 
 
+def active_storage_target_watts(raw_schedule: Sequence[ScheduledControlValues], now: datetime) -> int | None:
+    """The storage_target_watts (export positive - so positive values discharge) active at now, if any."""
+    for scv in raw_schedule:
+        if scv.active_from <= now and (scv.active_to is None or now < scv.active_to):
+            return scv.values.storage_target_watts
+    return None
+
+
+def sync_storage_target(raw_schedule: Sequence[ScheduledControlValues], now: datetime) -> None:
+    """STUB: storage_target_watts (a discharge setpoint, which should take precedence over the charging schedule)
+    isn't sent to the station yet - this only logs that it's being ignored.
+
+    Our ChargingStationMaxProfile can only carry limits/dischargeLimits - OCPP 2.1 restricts setpoints
+    (operationMode=CentralSetpoint + setpoint) to TxProfile/TxDefaultProfile. A TxProfile needs the active
+    transaction's id and would compete with the TxProfile Troca's own scheduler pushes for the session, so it's on
+    hold until we hear back on how this is best communicated. Note that whatever is pushed here will still be
+    capped by our ChargingStationMaxProfile's dischargeLimit (ie the export/generation limits)."""
+
+    target_watts = active_storage_target_watts(raw_schedule, now)
+    if target_watts is not None:
+        logger.warning(f"storage_target_watts={target_watts}W is active but isn't supported via OCPP yet - ignoring.")
+
+
 async def sync_ocpp_schedule(
     client: TrocaClient, target: OcppTarget, session: AsyncSession, now: datetime, last: PushedProfile | None
 ) -> PushedProfile | None:
@@ -84,14 +109,16 @@ async def sync_ocpp_schedule(
         logger.warning("The EVSE's rated power isn't known yet (see poll_metadata) - can't build a profile.")
         return last
 
+    raw_schedule = await calculate_schedule_values(session, now)
     desired = schedule_to_ocpp_profile(
-        await calculate_schedule_values(session, now),
+        raw_schedule,
         metadata.max_power_watts,
         now,
         PROFILE_ID,
         PROFILE_STACK_LEVEL,
         PROFILE_PURPOSE,
     )
+    sync_storage_target(raw_schedule, now)
     if not requires_push(last, desired, now):
         return last
 

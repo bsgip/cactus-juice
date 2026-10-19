@@ -18,6 +18,7 @@ from cactus_juice.troca.ocpp_schedule import (
     PROFILE_STACK_LEVEL,
     REFRESH_INTERVAL,
     PushedProfile,
+    active_storage_target_watts,
     requires_push,
     sync_ocpp_schedule,
 )
@@ -132,3 +133,39 @@ async def test_sync_ocpp_schedule_no_rated_power(patch_db, metadata: OCPPMetadat
     last = PushedProfile(profile(1), NOW - timedelta(days=1), True)
     assert await sync_ocpp_schedule(client, TARGET, None, NOW, last) is last  # ty: ignore[invalid-argument-type]
     assert not client.set_calls and not client.clear_calls
+
+
+def scv(start_mins: int, end_mins: int | None, storage_target_watts: int | None) -> ScheduledControlValues:
+    v = generate_class_instance(ActiveValues, optional_is_none=True, storage_target_watts=storage_target_watts)
+    return ScheduledControlValues(
+        active_from=NOW + timedelta(minutes=start_mins),
+        active_to=None if end_mins is None else NOW + timedelta(minutes=end_mins),
+        values=v,
+    )
+
+
+@pytest.mark.parametrize(
+    "schedule, expected",
+    [
+        ([], None),
+        ([scv(0, None, 5000)], 5000),
+        ([scv(0, None, None)], None),
+        ([scv(-10, 0, 1000), scv(0, 10, -2000), scv(10, None, 3000)], -2000),  # active_to is exclusive
+        ([scv(5, None, 5000)], None),  # Not started yet
+    ],
+)
+def test_active_storage_target_watts(schedule: list[ScheduledControlValues], expected: int | None):
+    assert active_storage_target_watts(schedule, NOW) == expected
+
+
+async def test_sync_ocpp_schedule_ignores_storage_target(patch_db, caplog: pytest.LogCaptureFixture):
+    """storage_target_watts is stubbed (see sync_storage_target) - it's logged but has no effect on the profile"""
+    patch_db["schedule"] = [scv(0, None, 5000)]
+    client = FakeTrocaClient()
+    await sync_ocpp_schedule(client, TARGET, None, NOW, None)  # ty: ignore[invalid-argument-type]
+
+    expected = schedule_to_ocpp_profile(
+        [scv(0, None, None)], MAX_POWER, NOW, PROFILE_ID, PROFILE_STACK_LEVEL, PROFILE_PURPOSE
+    )
+    assert client.set_calls == [(TARGET, PROFILE_EVSE_ID, expected)]
+    assert "storage_target_watts=5000W" in caplog.text

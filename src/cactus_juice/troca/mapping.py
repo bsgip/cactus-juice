@@ -197,20 +197,30 @@ def evse_to_metadata(evse: Evse) -> OCPPMetadata | None:
 
 
 def values_to_charge_watts(values: ActiveValues, max_power_watts: float) -> float:
-    """Maps CSIP-Aus derived control values into the fixed charge rate (W, import positive) the EV should be
-    held at. Troca only accepts fixed setpoints (not limits), so:
+    """Maps CSIP-Aus derived control values into the fixed charge rate (W, import positive - so negative means
+    discharge) the EV should be held at. Troca only accepts fixed setpoints (not limits), so:
       * connect=False or energize=False -> 0W (there's no way to genuinely open the contactor via Troca)
+      * storage_target_watts set -> that setpoint takes precedence (it's export positive - so positive values
+        discharge, negative values charge). Its magnitude is capped by max_power_watts and either the export and
+        generation limits (discharging) or the import and load limits (charging)
       * otherwise charge at max_power_watts, capped by the import and load limits (if set)
 
-    Discharge is never requested - export_limit_watts / generation_limit_watts only ever restrict discharging,
-    and storage_target_watts isn't mapped. ramp_time_seconds / ramp_percent_max_second_hundredths aren't applied
-    either - every change jumps straight to the new setpoint."""
+    Discharge is only ever requested via storage_target_watts. ramp_time_seconds /
+    ramp_percent_max_second_hundredths aren't applied - every change jumps straight to the new setpoint."""
 
     if values.connect is False or values.energize is False:
         return 0.0
 
-    caps = [max_power_watts] + [lim for lim in (values.import_limit_watts, values.load_limit_watts) if lim is not None]
-    return float(max(0, min(caps)))
+    charge_limits = [lim for lim in (values.import_limit_watts, values.load_limit_watts) if lim is not None]
+    if values.storage_target_watts is not None and values.storage_target_watts > 0:
+        discharge_limits = [
+            lim for lim in (values.export_limit_watts, values.generation_limit_watts) if lim is not None
+        ]
+        return -float(max(0, min([values.storage_target_watts, max_power_watts] + discharge_limits))) + 0.0
+    if values.storage_target_watts is not None:
+        return float(max(0, min([-values.storage_target_watts, max_power_watts] + charge_limits)))
+
+    return float(max(0, min([max_power_watts] + charge_limits)))
 
 
 def _to_troca_kw(watts: float) -> float:
@@ -327,8 +337,9 @@ def values_to_ocpp_limits(values: ActiveValues, max_power_watts: float) -> tuple
       * discharge limit: the export and generation limits (if set) as a negative number (per OCPP 2.1), or None
         for no discharge limit
 
-    storage_target_watts isn't mapped, nor are ramp_time_seconds / ramp_percent_max_second_hundredths - OCPP
-    profiles have no concept of a ramp, so every change jumps straight to the new limit."""
+    storage_target_watts isn't mapped (it's a setpoint, not a limit - see ocpp_schedule.sync_storage_target),
+    nor are ramp_time_seconds / ramp_percent_max_second_hundredths - OCPP profiles have no concept of a ramp, so
+    every change jumps straight to the new limit."""
 
     if values.connect is False or values.energize is False:
         return 0.0, 0.0
