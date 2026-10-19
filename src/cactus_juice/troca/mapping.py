@@ -259,21 +259,23 @@ def _bounds(kw: float) -> Bounds:
 
 
 @dataclass(frozen=True, slots=True)
-class _Segment:
+class Segment:
+    """A [start, end) span of time holding a fixed value"""
+
     start: datetime
     end: datetime
     value: tuple[float | None, ...]
 
 
-def _append_segment(segments: list[_Segment], start: datetime, end: datetime, value: tuple[float | None, ...]) -> None:
+def _append_segment(segments: list[Segment], start: datetime, end: datetime, value: tuple[float | None, ...]) -> None:
     """Appends a segment (clipped to start no earlier than now), merging it into the previous segment if it's a
     contiguous continuation of the same value."""
     if end <= start:
         return
     if segments and segments[-1].end == start and segments[-1].value == value:
-        segments[-1] = _Segment(segments[-1].start, end, value)
+        segments[-1] = Segment(segments[-1].start, end, value)
     else:
-        segments.append(_Segment(start, end, value))
+        segments.append(Segment(start, end, value))
 
 
 def _interpolate(
@@ -293,7 +295,7 @@ def ramp_segments(
     now: datetime,
     horizon: datetime,
     ramp_step: timedelta,
-) -> list[_Segment]:
+) -> list[Segment]:
     """Flattens the full CSIP-Aus schedule (contiguous, in order) into non overlapping segments (clipped to start no
     earlier than now, and end no later than horizon) of to_value(values), merging contiguous segments of the same
     value.
@@ -309,7 +311,7 @@ def ramp_segments(
 
     now = now.replace(microsecond=0)
     horizon = horizon.replace(microsecond=0)
-    segments: list[_Segment] = []
+    segments: list[Segment] = []
     previous: tuple[float | None, ...] | None = None  # The value the previous interval finished at
     for scv in raw_schedule:
         start = scv.active_from.replace(microsecond=0)
@@ -335,7 +337,7 @@ def ramp_segments(
     return segments
 
 
-def _segments_match(applied: list[_Segment], desired: list[_Segment], now: datetime) -> bool:
+def _segments_match(applied: list[Segment], desired: list[Segment], now: datetime) -> bool:
     """True if the applied segments will produce the same values as desired.
 
     The end of the final segment is only loosely compared - a freshly calculated schedule always extends its last
@@ -358,8 +360,8 @@ def _segments_match(applied: list[_Segment], desired: list[_Segment], now: datet
     return True
 
 
-def _troca_segments(schedule: ActivePowerSchedule, now: datetime) -> list[_Segment]:
-    segments: list[_Segment] = []
+def _troca_segments(schedule: ActivePowerSchedule, now: datetime) -> list[Segment]:
+    segments: list[Segment] = []
     for p in schedule.periods:
         if p.global_ is None or p.global_.value is None:
             continue
@@ -462,8 +464,8 @@ def schedule_to_ocpp_profile(
     )
 
 
-def _ocpp_segments(profile: OcppChargingProfile, now: datetime) -> list[_Segment]:
-    segments: list[_Segment] = []
+def _ocpp_segments(profile: OcppChargingProfile, now: datetime) -> list[Segment]:
+    segments: list[Segment] = []
     for schedule in profile.charging_schedule:
         if schedule.start_schedule is None or schedule.duration is None:
             continue

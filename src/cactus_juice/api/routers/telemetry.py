@@ -13,11 +13,14 @@ from cactus_juice.crud import (
     fetch_satec_configs,
     fetch_satec_readings_in_range,
     fetch_task_health,
+    fetch_troca_config,
 )
 from cactus_juice.csipaus.controls import calculate_schedule_values
-from cactus_juice.csipaus.dto import ScheduledControlValues
+from cactus_juice.csipaus.dto import ActiveValues, ScheduledControlValues
 from cactus_juice.model import CSIPAusDynamicPrice, OCPPMetadata, OCPPReading, SatecReading, TaskHealth
 from cactus_juice.tasks import TASKS
+from cactus_juice.troca.mapping import Segment, ramp_segments
+from cactus_juice.troca.schedule import calculate_ramp_schedule_values
 
 router = APIRouter(prefix="/api/telemetry", tags=["telemetry"])
 
@@ -58,6 +61,33 @@ class ScheduledValuesResponse(BaseModel):
             ramp_percent_max_second_hundredths=scv.values.ramp_percent_max_second_hundredths,
             ramp_time_seconds=scv.values.ramp_time_seconds,
         )
+
+
+class RampedLimitsResponse(BaseModel):
+    """The import/export limits active for [active_from, active_to) once the Troca client's ramping steps have been
+    applied (see cactus_juice.troca.mapping.ramp_segments). Limits are 0 while disconnected/de-energised."""
+
+    active_from: datetime
+    active_to: datetime
+    import_limit_watts: float | None
+    export_limit_watts: float | None
+
+    @staticmethod
+    def from_segment(seg: Segment) -> "RampedLimitsResponse":
+        return RampedLimitsResponse(
+            active_from=seg.start,
+            active_to=seg.end,
+            import_limit_watts=seg.value[0],
+            export_limit_watts=seg.value[1],
+        )
+
+
+def _limits(v: ActiveValues) -> tuple[float | None, ...]:
+    """The (import, export) limits to ramp between - forced to 0 when disconnected/de-energised, mirroring how the
+    frontend charts the raw schedule."""
+    if v.connect is False or v.energize is False:
+        return 0.0, 0.0
+    return tuple(None if lim is None else float(lim) for lim in (v.import_limit_watts, v.export_limit_watts))
 
 
 class DynamicPriceResponse(BaseModel):
@@ -178,6 +208,8 @@ class TelemetrySnapshotResponse(BaseModel):
     window_start: datetime
     window_end: datetime
     schedule: list[ScheduledValuesResponse]
+    ramped_limits: list[RampedLimitsResponse]
+    ramp_step_seconds: int  # The Troca client's ramp step - 0 means ramping is disabled (ramped_limits == schedule)
     dynamic_prices: list[DynamicPriceResponse]
     ocpp_readings: list[OCPPReadingResponse]
     ocpp_metadata: OCPPMetadataResponse | None
@@ -192,12 +224,20 @@ async def get_telemetry_snapshot(session: AsyncSession = Depends(get_session)) -
     from WINDOW_LOOKBACK_SECONDS in the past through to WINDOW_DURATION_SECONDS after that.
 
     The schedule is resolved from window_start (not now) so the chart shows a glimpse of what was actually in
-    effect over the last WINDOW_LOOKBACK_SECONDS, not just what's upcoming."""
+    effect over the last WINDOW_LOOKBACK_SECONDS, not just what's upcoming. ramped_limits is the same schedule's
+    import/export limits stepped the way the Troca client ramps them (per the current TrocaConfig)."""
     now = datetime.now(UTC)
     window_start = now - timedelta(seconds=WINDOW_LOOKBACK_SECONDS)
     window_end = window_start + timedelta(seconds=WINDOW_DURATION_SECONDS)
 
     schedule = await calculate_schedule_values(session, window_start)
+
+    troca_config = await fetch_troca_config(session)
+    ramp_step_seconds = 0 if troca_config is None else troca_config.ramp_step_seconds
+    ramp_step = timedelta(seconds=ramp_step_seconds)
+    ramp_schedule = await calculate_ramp_schedule_values(session, window_start, ramp_step)
+    ramped_limits = ramp_segments(ramp_schedule, _limits, window_start, window_end, ramp_step)
+
     dynamic_prices = await fetch_dynamic_prices_active_from(session, window_start)
     ocpp_readings = await fetch_ocpp_readings_in_range(session, window_start, window_end)
     ocpp_metadata = await fetch_ocpp_metadata(session)
@@ -219,6 +259,8 @@ async def get_telemetry_snapshot(session: AsyncSession = Depends(get_session)) -
         window_start=window_start,
         window_end=window_end,
         schedule=[ScheduledValuesResponse.from_model(s) for s in schedule],
+        ramped_limits=[RampedLimitsResponse.from_segment(seg) for seg in ramped_limits],
+        ramp_step_seconds=ramp_step_seconds,
         dynamic_prices=[DynamicPriceResponse.from_model(p) for p in dynamic_prices],
         ocpp_readings=[OCPPReadingResponse.from_model(r) for r in ocpp_readings],
         ocpp_metadata=OCPPMetadataResponse.from_model(ocpp_metadata) if ocpp_metadata is not None else None,

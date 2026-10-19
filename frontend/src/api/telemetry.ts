@@ -16,6 +16,15 @@ export interface ScheduledValues {
   rampTimeSeconds: number | null
 }
 
+/** Mirrors cactus_juice.api.routers.telemetry.RampedLimitsResponse - the schedule's import/export limits for
+ * [activeFrom, activeTo) once the Troca client's ramping steps have been applied. */
+export interface RampedLimits {
+  activeFrom: string
+  activeTo: string
+  importLimitWatts: number | null
+  exportLimitWatts: number | null
+}
+
 /** Mirrors cactus_juice.api.routers.telemetry.DynamicPriceResponse. */
 export interface DynamicPrice {
   mrid: string
@@ -76,6 +85,8 @@ export interface TelemetrySnapshot {
   windowStart: string
   windowEnd: string
   schedule: ScheduledValues[]
+  rampedLimits: RampedLimits[]
+  rampStepSeconds: number // 0 means ramping is disabled
   dynamicPrices: DynamicPrice[]
   ocppReadings: OcppReading[]
   ocppMetadata: OcppMetadata | null
@@ -97,6 +108,13 @@ interface ScheduledValuesWire {
   storage_target_watts: number | null
   ramp_percent_max_second_hundredths: number | null
   ramp_time_seconds: number | null
+}
+
+interface RampedLimitsWire {
+  active_from: string
+  active_to: string
+  import_limit_watts: number | null
+  export_limit_watts: number | null
 }
 
 interface DynamicPriceWire {
@@ -150,6 +168,8 @@ interface TelemetrySnapshotWire {
   window_start: string
   window_end: string
   schedule: ScheduledValuesWire[]
+  ramped_limits: RampedLimitsWire[]
+  ramp_step_seconds: number
   dynamic_prices: DynamicPriceWire[]
   ocpp_readings: OcppReadingWire[]
   ocpp_metadata: OcppMetadataWire | null
@@ -170,6 +190,15 @@ function scheduledValuesFromWire(wire: ScheduledValuesWire): ScheduledValues {
     storageTargetWatts: wire.storage_target_watts,
     rampPercentMaxSecondHundredths: wire.ramp_percent_max_second_hundredths,
     rampTimeSeconds: wire.ramp_time_seconds,
+  }
+}
+
+function rampedLimitsFromWire(wire: RampedLimitsWire): RampedLimits {
+  return {
+    activeFrom: wire.active_from,
+    activeTo: wire.active_to,
+    importLimitWatts: wire.import_limit_watts,
+    exportLimitWatts: wire.export_limit_watts,
   }
 }
 
@@ -235,6 +264,8 @@ function fromWire(wire: TelemetrySnapshotWire): TelemetrySnapshot {
     windowStart: wire.window_start,
     windowEnd: wire.window_end,
     schedule: wire.schedule.map(scheduledValuesFromWire),
+    rampedLimits: wire.ramped_limits.map(rampedLimitsFromWire),
+    rampStepSeconds: wire.ramp_step_seconds,
     dynamicPrices: wire.dynamic_prices.map(dynamicPriceFromWire),
     ocppReadings: wire.ocpp_readings.map(ocppReadingFromWire),
     ocppMetadata: wire.ocpp_metadata ? ocppMetadataFromWire(wire.ocpp_metadata) : null,

@@ -1,7 +1,7 @@
-import { Alert, Badge, Box, Group, Paper, SimpleGrid, Stack, Text } from '@mantine/core'
+import { Alert, Badge, Box, Checkbox, Group, Paper, SimpleGrid, Stack, Text, Tooltip } from '@mantine/core'
 import { LineChart, type LineChartSeries } from '@mantine/charts'
 import { IconAlertCircle } from '@tabler/icons-react'
-import { useMemo } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
 import { formatApiError } from '../api/http'
@@ -9,6 +9,7 @@ import {
   fetchTelemetrySnapshot,
   type DynamicPrice,
   type OcppReading,
+  type RampedLimits,
   type SatecReading,
   type ScheduledValues,
   type TaskHealth,
@@ -16,6 +17,7 @@ import {
 import { PageHeading } from '../layout/AppLayout'
 
 const SNAPSHOT_QUERY_KEY = ['telemetry-snapshot']
+const SHOW_RAMPS_STORAGE_KEY = 'telemetry.showRamps'
 const REFRESH_INTERVAL_MS = 10_000
 
 /** A task whose last run is older than this (or that has never run at all) is considered stale, even if it
@@ -146,6 +148,34 @@ function scheduleToIntervals(schedule: ScheduledValues[], field: keyof Scheduled
   }))
 }
 
+/** The ramped import/export limit series - already forced to 0 while disconnected/de-energised by the backend. */
+function rampedLimitsToIntervals(
+  rampedLimits: RampedLimits[],
+  field: 'importLimitWatts' | 'exportLimitWatts',
+): Interval[] {
+  return rampedLimits.map((r) => ({
+    start: new Date(r.activeFrom).getTime(),
+    end: new Date(r.activeTo).getTime(),
+    value: r[field],
+  }))
+}
+
+function loadShowRamps(): boolean {
+  try {
+    return localStorage.getItem(SHOW_RAMPS_STORAGE_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+function saveShowRamps(value: boolean): void {
+  try {
+    localStorage.setItem(SHOW_RAMPS_STORAGE_KEY, String(value))
+  } catch {
+    // Not persisting the preference is harmless
+  }
+}
+
 function poweredOffLabel(s: ScheduledValues): string {
   if (s.connect === false && s.energize === false) return 'Disconnected + de-energised'
   return s.connect === false ? 'Disconnected' : 'De-energised'
@@ -256,6 +286,7 @@ interface TimeSeriesPanelProps {
   yAxisDomain?: [number, number]
   extraReferenceLines?: { y: number; label: string }[]
   markers?: ScheduleMarker[]
+  headerRight?: ReactNode
 }
 
 function TimeSeriesPanel({
@@ -269,12 +300,16 @@ function TimeSeriesPanel({
   yAxisDomain,
   extraReferenceLines = [],
   markers = [],
+  headerRight,
 }: TimeSeriesPanelProps) {
   return (
     <Paper withBorder p="md">
-      <Text fw={600} size="sm" mb="xs">
-        {title}
-      </Text>
+      <Group justify="space-between" gap="xs" mb="xs">
+        <Text fw={600} size="sm">
+          {title}
+        </Text>
+        {headerRight}
+      </Group>
       <LineChart
         h={220}
         data={data}
@@ -332,6 +367,14 @@ export function TelemetryPage() {
     refetchInterval: REFRESH_INTERVAL_MS,
   })
 
+  const [showRamps, setShowRamps] = useState(loadShowRamps)
+  const toggleShowRamps = (value: boolean) => {
+    setShowRamps(value)
+    saveShowRamps(value)
+  }
+  const rampingDisabled = snapshot?.rampStepSeconds === 0
+  const rampsShown = showRamps && !rampingDisabled
+
   const chartData = useMemo(() => {
     if (!snapshot) return null
 
@@ -359,8 +402,12 @@ export function TelemetryPage() {
 
     const power = buildStepRows(
       {
-        importLimitWatts: scheduleToIntervals(snapshot.schedule, 'importLimitWatts'),
-        exportLimitWatts: scheduleToIntervals(snapshot.schedule, 'exportLimitWatts'),
+        importLimitWatts: rampsShown
+          ? rampedLimitsToIntervals(snapshot.rampedLimits, 'importLimitWatts')
+          : scheduleToIntervals(snapshot.schedule, 'importLimitWatts'),
+        exportLimitWatts: rampsShown
+          ? rampedLimitsToIntervals(snapshot.rampedLimits, 'exportLimitWatts')
+          : scheduleToIntervals(snapshot.schedule, 'exportLimitWatts'),
         loadLimitWatts: scheduleToIntervals(snapshot.schedule, 'loadLimitWatts'),
         generationLimitWatts: scheduleToIntervals(snapshot.schedule, 'generationLimitWatts'),
         storageTargetWatts: scheduleToIntervals(snapshot.schedule, 'storageTargetWatts'),
@@ -415,7 +462,7 @@ export function TelemetryPage() {
     const scheduleMarkers = scheduleToMarkers(snapshot.schedule, windowStartMs, windowEndMs)
 
     return { windowStartMs, windowEndMs, nowMs, scheduleMarkers, power, reactivePower, price, frequency, voltage, soc, satecLabels }
-  }, [snapshot])
+  }, [snapshot, rampsShown])
 
   const satecSeries = useMemo(
     () =>
@@ -499,12 +546,37 @@ export function TelemetryPage() {
             unit=" W"
             data={chartData.power}
             markers={chartData.scheduleMarkers}
+            headerRight={
+              <Tooltip
+                label="Ramping is disabled in Troca config"
+                disabled={!rampingDisabled}
+                withArrow
+              >
+                <div>
+                  <Checkbox
+                    size="xs"
+                    label="Show ramps"
+                    checked={rampsShown}
+                    disabled={rampingDisabled}
+                    onChange={(e) => toggleShowRamps(e.currentTarget.checked)}
+                  />
+                </div>
+              </Tooltip>
+            }
             windowStartMs={chartData.windowStartMs}
             windowEndMs={chartData.windowEndMs}
             nowMs={chartData.nowMs}
             series={[
-              { name: 'importLimitWatts', label: 'Import limit (sched.)', color: 'gray.5' },
-              { name: 'exportLimitWatts', label: 'Export limit (sched.)', color: 'gray.6' },
+              {
+                name: 'importLimitWatts',
+                label: rampsShown ? 'Import limit (ramped)' : 'Import limit (sched.)',
+                color: 'gray.5',
+              },
+              {
+                name: 'exportLimitWatts',
+                label: rampsShown ? 'Export limit (ramped)' : 'Export limit (sched.)',
+                color: 'gray.6',
+              },
               { name: 'loadLimitWatts', label: 'Load limit (sched.)', color: 'yellow.5' },
               { name: 'generationLimitWatts', label: 'Generation limit (sched.)', color: 'grape.5' },
               { name: 'storageTargetWatts', label: 'Storage target (sched.)', color: 'violet.5' },

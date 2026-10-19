@@ -79,6 +79,8 @@ def test_get_snapshot_empty_db(client: TestClient):
     body = response.json()
     assert len(body["schedule"]) == 1
     assert body["schedule"][0]["active_to"] is None
+    assert body["ramp_step_seconds"] == 0  # No TrocaConfig - so no ramping
+    assert [(r["import_limit_watts"], r["export_limit_watts"]) for r in body["ramped_limits"]] == [(None, None)]
     assert body["dynamic_prices"] == []
     assert body["ocpp_readings"] == []
     assert body["ocpp_metadata"] is None
@@ -171,3 +173,71 @@ def test_get_snapshot_task_health(client: TestClient, pg_empty_config: Connectio
     assert by_name[failing_task]["last_run_at"] == "2026-01-01T00:00:00Z"
     assert by_name[failing_task]["last_exception_at"] == "2026-01-01T00:00:00Z"
     assert by_name[failing_task]["last_exception"] == "connection refused"
+
+
+def _seed_ramp(db: Connection, ramp_step_seconds: int) -> None:
+    """Seeds a control holding 0W import until 00:02 followed by a 1000W import control that ramps over 100s."""
+    with db.cursor() as cursor:
+        cursor.execute(
+            "INSERT INTO csipaus_control (primacy, mrid, duration_seconds, started_at, created_at, ramp_time_seconds,"
+            " import_limit_watts)"
+            " VALUES (1, 'A', 120, '2026-01-01T00:00:00Z', '2000-01-01T00:00:00Z', NULL, 0),"
+            " (1, 'B', 3600, '2026-01-01T00:02:00Z', '2000-01-01T00:00:00Z', 100, 1000)"
+        )
+        cursor.execute(
+            "INSERT INTO troca_config (created_at, base_url, basic_user, basic_password, ramp_step_seconds)"
+            " VALUES ('2000-01-01T00:00:00Z', 'https://example.com', 'u', 'p', %s)",
+            (ramp_step_seconds,),
+        )
+    db.commit()
+
+
+@pytest.mark.parametrize(
+    "now, ramp_step_seconds, expected",
+    [
+        (
+            "2026-01-01T00:02:00Z",
+            25,
+            [
+                ("00:01:00", "00:02:25", 0.0),
+                ("00:02:25", "00:02:50", 250.0),
+                ("00:02:50", "00:03:15", 500.0),
+                ("00:03:15", "00:03:40", 750.0),
+                ("00:03:40", "00:06:00", 1000.0),
+            ],
+        ),
+        # The window starts after the ramp began - it still steps from the preceding control's value
+        (
+            "2026-01-01T00:03:00Z",
+            25,
+            [
+                ("00:02:00", "00:02:25", 0.0),
+                ("00:02:25", "00:02:50", 250.0),
+                ("00:02:50", "00:03:15", 500.0),
+                ("00:03:15", "00:03:40", 750.0),
+                ("00:03:40", "00:07:00", 1000.0),
+            ],
+        ),
+        # Ramping disabled - the limits jump just like the raw schedule
+        ("2026-01-01T00:02:00Z", 0, [("00:01:00", "00:02:00", 0.0), ("00:02:00", "00:06:00", 1000.0)]),
+    ],
+)
+def test_get_snapshot_ramped_limits(
+    client: TestClient,
+    pg_empty_config: Connection,
+    now: str,
+    ramp_step_seconds: int,
+    expected: list[tuple[str, str, float]],
+):
+    _seed_ramp(pg_empty_config, ramp_step_seconds)
+
+    with freeze_time(now):
+        response = client.get("/api/telemetry/snapshot")
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["ramp_step_seconds"] == ramp_step_seconds
+    assert [
+        (r["active_from"], r["active_to"], r["import_limit_watts"], r["export_limit_watts"])
+        for r in body["ramped_limits"]
+    ] == [(f"2026-01-01T{a}Z", f"2026-01-01T{b}Z", v, None) for a, b, v in expected]
