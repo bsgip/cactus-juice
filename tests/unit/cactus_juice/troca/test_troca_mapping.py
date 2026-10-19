@@ -17,6 +17,7 @@ from cactus_juice.troca.mapping import (
     ocpp_profiles_match,
     price_to_rational,
     prices_to_ocpp_profile,
+    ramp_segments,
     rated_power_watts,
     reading_to_db,
     schedule_to_ocpp_profile,
@@ -50,6 +51,7 @@ from cactus_juice.troca.models import (
 
 NOW = datetime(2026, 9, 28, 4, 0, 0, tzinfo=UTC)
 MAX_POWER = 40000.0
+RAMP_STEP = timedelta(seconds=3)
 
 
 def values(**kwargs) -> ActiveValues:
@@ -105,7 +107,7 @@ def test_schedule_to_troca_full_schedule():
         scv(30, None, values()),
     ]
 
-    result = schedule_to_troca(raw, MAX_POWER, NOW)
+    result = schedule_to_troca(raw, MAX_POWER, NOW, RAMP_STEP)
 
     assert result is not None
     assert result.start_time == "2026-09-28T04:00:00Z"
@@ -118,15 +120,171 @@ def test_schedule_to_troca_full_schedule():
 
 
 def test_schedule_to_troca_empty():
-    assert schedule_to_troca([], MAX_POWER, NOW) is None
+    assert schedule_to_troca([], MAX_POWER, NOW, RAMP_STEP) is None
 
 
 def test_schedule_to_troca_truncates():
     raw = [scv(i, i + 1, values(import_limit_watts=1000 * (i % 2))) for i in range(MAX_SCHEDULE_PERIODS + 10)]
-    result = schedule_to_troca(raw, MAX_POWER, NOW)
+    result = schedule_to_troca(raw, MAX_POWER, NOW, RAMP_STEP)
     assert result is not None
     assert len(result.periods) == MAX_SCHEDULE_PERIODS
     assert result.end_time == to_troca_timestamp(NOW + timedelta(minutes=MAX_SCHEDULE_PERIODS))
+
+
+def scv_secs(start_secs: int, end_secs: int | None, v: ActiveValues) -> ScheduledControlValues:
+    return ScheduledControlValues(
+        active_from=NOW + timedelta(seconds=start_secs),
+        active_to=None if end_secs is None else NOW + timedelta(seconds=end_secs),
+        values=v,
+    )
+
+
+def import_limit(v: ActiveValues) -> tuple[float | None, ...]:
+    return (None if v.import_limit_watts is None else float(v.import_limit_watts),)
+
+
+def secs(s: int) -> datetime:
+    return NOW + timedelta(seconds=s)
+
+
+HORIZON = NOW + timedelta(hours=1)
+
+
+@pytest.mark.parametrize(
+    "raw, now_secs, ramp_step_secs, expected",
+    [
+        # 0W -> 1000W over 100s with 25s steps - stepping by 250W, reaching the target exactly 100s in
+        (
+            [
+                scv_secs(-60, 0, values(import_limit_watts=0)),
+                scv_secs(0, None, values(import_limit_watts=1000, ramp_time_seconds=100)),
+            ],
+            -60,
+            25,
+            [(-60, 25, 0.0), (25, 50, 250.0), (50, 75, 500.0), (75, 100, 750.0), (100, 3600, 1000.0)],
+        ),
+        # Ramping disabled - jumps straight to the target
+        (
+            [
+                scv_secs(-60, 0, values(import_limit_watts=0)),
+                scv_secs(0, None, values(import_limit_watts=1000, ramp_time_seconds=100)),
+            ],
+            -60,
+            0,
+            [(-60, 0, 0.0), (0, 3600, 1000.0)],
+        ),
+        # No ramp time - jumps straight to the target
+        (
+            [scv_secs(-60, 0, values(import_limit_watts=0)), scv_secs(0, None, values(import_limit_watts=1000))],
+            -60,
+            25,
+            [(-60, 0, 0.0), (0, 3600, 1000.0)],
+        ),
+        # Ramp time isn't a multiple of the step - the final step is shortened
+        (
+            [
+                scv_secs(-60, 0, values(import_limit_watts=0)),
+                scv_secs(0, None, values(import_limit_watts=1000, ramp_time_seconds=100)),
+            ],
+            -60,
+            30,
+            [(-60, 30, 0.0), (30, 60, 300.0), (60, 90, 600.0), (90, 100, 900.0), (100, 3600, 1000.0)],
+        ),
+        # Ramping down
+        (
+            [
+                scv_secs(-60, 0, values(import_limit_watts=1000)),
+                scv_secs(0, None, values(import_limit_watts=0, ramp_time_seconds=50)),
+            ],
+            -60,
+            25,
+            [(-60, 25, 1000.0), (25, 50, 500.0), (50, 3600, 0.0)],
+        ),
+        # Interrupted ramp - the next interval ramps from wherever the previous ramp got to (250W)
+        (
+            [
+                scv_secs(-60, 0, values(import_limit_watts=0)),
+                scv_secs(0, 50, values(import_limit_watts=1000, ramp_time_seconds=100)),
+                scv_secs(50, None, values(import_limit_watts=0, ramp_time_seconds=40)),
+            ],
+            -60,
+            20,
+            [(-60, 20, 0.0), (20, 40, 200.0), (40, 70, 400.0), (70, 90, 200.0), (90, 3600, 0.0)],
+        ),
+        # Clipped to now part way through the ramp
+        (
+            [
+                scv_secs(-60, 0, values(import_limit_watts=0)),
+                scv_secs(0, None, values(import_limit_watts=1000, ramp_time_seconds=100)),
+            ],
+            60,
+            25,
+            [(60, 75, 500.0), (75, 100, 750.0), (100, 3600, 1000.0)],
+        ),
+        # The first interval has nothing to ramp from
+        ([scv_secs(0, None, values(import_limit_watts=1000, ramp_time_seconds=100))], 0, 25, [(0, 3600, 1000.0)]),
+        # Can't ramp from/to an unset value
+        (
+            [scv_secs(-60, 0, values()), scv_secs(0, None, values(import_limit_watts=1000, ramp_time_seconds=100))],
+            -60,
+            25,
+            [(-60, 0, None), (0, 3600, 1000.0)],
+        ),
+        # Interpolated values are rounded to whole watts
+        (
+            [
+                scv_secs(-60, 0, values(import_limit_watts=0)),
+                scv_secs(0, None, values(import_limit_watts=1000, ramp_time_seconds=3)),
+            ],
+            -60,
+            1,
+            [(-60, 1, 0.0), (1, 2, 333.0), (2, 3, 667.0), (3, 3600, 1000.0)],
+        ),
+    ],
+)
+def test_ramp_segments(
+    raw: list[ScheduledControlValues],
+    now_secs: int,
+    ramp_step_secs: int,
+    expected: list[tuple[int, int, float | None]],
+):
+    segments = ramp_segments(raw, import_limit, secs(now_secs), HORIZON, timedelta(seconds=ramp_step_secs))
+    assert [(s.start, s.end, s.value) for s in segments] == [(secs(a), secs(b), (v,)) for a, b, v in expected]
+
+
+def test_schedule_to_troca_ramps():
+    raw = [
+        scv_secs(-60, 0, values(import_limit_watts=0)),
+        scv_secs(0, None, values(import_limit_watts=1000, ramp_time_seconds=100)),
+    ]
+
+    result = schedule_to_troca(raw, MAX_POWER, NOW, timedelta(seconds=25))
+
+    assert result is not None
+    assert [(p.start_time, p.end_time, p.global_) for p in result.periods] == [
+        (to_troca_timestamp(secs(0)), to_troca_timestamp(secs(25)), Bounds(value=0.0, unit="kW")),
+        (to_troca_timestamp(secs(25)), to_troca_timestamp(secs(50)), Bounds(value=-0.25, unit="kW")),
+        (to_troca_timestamp(secs(50)), to_troca_timestamp(secs(75)), Bounds(value=-0.5, unit="kW")),
+        (to_troca_timestamp(secs(75)), to_troca_timestamp(secs(100)), Bounds(value=-0.75, unit="kW")),
+        (to_troca_timestamp(secs(100)), result.end_time, Bounds(value=-1.0, unit="kW")),
+    ]
+
+
+def test_schedule_to_ocpp_profile_ramps():
+    """Both limits ramp independently - an unset discharge limit can't be ramped, so it jumps"""
+    raw = [
+        scv_secs(-60, 0, values(import_limit_watts=0, export_limit_watts=2000)),
+        scv_secs(0, None, values(import_limit_watts=1000, ramp_time_seconds=50)),
+    ]
+
+    profile = schedule_to_ocpp_profile(
+        raw, MAX_POWER, NOW, 1, 0, OcppChargingProfilePurpose.CHARGING_STATION_MAX_PROFILE, timedelta(seconds=25)
+    )
+
+    assert profile is not None
+    assert [
+        (p.start_period, p.limit, p.discharge_limit) for p in profile.charging_schedule[0].charging_schedule_period
+    ] == [(0, 0.0, None), (25, 500.0, None), (50, 1000.0, None)]
 
 
 def test_set_charging_profile_parameters_matches_observed_request():
@@ -337,6 +495,7 @@ def test_schedule_to_ocpp_profile():
         9001,
         0,
         OcppChargingProfilePurpose.CHARGING_STATION_MAX_PROFILE,
+        RAMP_STEP,
     )
 
     assert profile is not None
@@ -364,10 +523,10 @@ def test_schedule_to_ocpp_profile():
 
 def test_schedule_to_ocpp_profile_empty_and_truncated():
     purpose = OcppChargingProfilePurpose.CHARGING_STATION_MAX_PROFILE
-    assert schedule_to_ocpp_profile([], MAX_POWER, NOW, 1, 0, purpose) is None
+    assert schedule_to_ocpp_profile([], MAX_POWER, NOW, 1, 0, purpose, RAMP_STEP) is None
 
     raw = [scv(i, i + 1, values(import_limit_watts=1000 * (i % 2))) for i in range(MAX_SCHEDULE_PERIODS + 10)]
-    profile = schedule_to_ocpp_profile(raw, MAX_POWER, NOW, 1, 0, purpose)
+    profile = schedule_to_ocpp_profile(raw, MAX_POWER, NOW, 1, 0, purpose, RAMP_STEP)
     assert profile is not None
     assert len(profile.charging_schedule[0].charging_schedule_period) == MAX_SCHEDULE_PERIODS
     assert profile.charging_schedule[0].duration == MAX_SCHEDULE_PERIODS * 60

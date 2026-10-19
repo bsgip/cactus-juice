@@ -487,6 +487,13 @@ def _value_to_int(v: float | int | None) -> int | None:
     return int(v)
 
 
+def _ramp_tms_to_seconds(ramp_tms: int | None) -> int | None:
+    """rampTms is in hundredths of a second - rounded to the nearest whole second."""
+    if ramp_tms is None:
+        return None
+    return round(ramp_tms / 100)
+
+
 def dercontrol_to_csipaus_control(derc: DERControlResponse, primacy: int) -> CSIPAusControl:
     """Maps a raw DERControl to the internal DB representation. The cancelled/superseded times will be set to
     now (if appropriate), NOT the actual time it was superseded as we only care about when WE discovered it"""
@@ -519,7 +526,7 @@ def dercontrol_to_csipaus_control(derc: DERControlResponse, primacy: int) -> CSI
         cancelled_at=cancelled_at,
         superseded_at=superseded_at,
         reply_to=reply_to,
-        ramp_time_seconds=base.rampTms,
+        ramp_time_seconds=_ramp_tms_to_seconds(base.rampTms),
         connect=base.opModConnect,
         energize=base.opModEnergize,
         import_limit_watts=_value_to_int(sep2_to_value(base.opModImpLimW)),

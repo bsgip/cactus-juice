@@ -109,10 +109,10 @@ async def test_resolve_ocpp_target(connectors: list[Connector], stations: list[S
 async def test_poll_schedules_dispatch(monkeypatch: pytest.MonkeyPatch):
     calls: list[str] = []
 
-    async def sync_session_schedule(client, session, now, evse_location):
+    async def sync_session_schedule(client, session, now, ramp_step, evse_location):
         calls.append(f"session {evse_location}")
 
-    async def sync_ocpp_schedule(client, target, session, now, last):
+    async def sync_ocpp_schedule(client, target, session, now, last, ramp_step):
         calls.append(f"ocpp {target.station_name}")
         return "pushed"
 

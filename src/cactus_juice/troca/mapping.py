@@ -1,4 +1,4 @@
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -205,8 +205,8 @@ def values_to_charge_watts(values: ActiveValues, max_power_watts: float) -> floa
         generation limits (discharging) or the import and load limits (charging)
       * otherwise charge at max_power_watts, capped by the import and load limits (if set)
 
-    Discharge is only ever requested via storage_target_watts. ramp_time_seconds /
-    ramp_percent_max_second_hundredths aren't applied - every change jumps straight to the new setpoint."""
+    Discharge is only ever requested via storage_target_watts. ramp_time_seconds is applied separately (see
+    ramp_segments) and ramp_percent_max_second_hundredths isn't applied at all."""
 
     if values.connect is False or values.energize is False:
         return 0.0
@@ -228,32 +228,29 @@ def _to_troca_kw(watts: float) -> float:
 
 
 def schedule_to_troca(
-    raw_schedule: Sequence[ScheduledControlValues], max_power_watts: float, now: datetime
+    raw_schedule: Sequence[ScheduledControlValues], max_power_watts: float, now: datetime, ramp_step: timedelta
 ) -> ActivePowerSchedule | None:
-    """Maps the full CSIP-Aus schedule (as produced by calculate_schedule_values - contiguous, starting from now)
-    into a Troca ActivePowerSchedule. Adjacent intervals resolving to the same setpoint are merged, and the final
-    open-ended interval is extended out to now + SCHEDULE_HORIZON. Returns None if there's nothing to schedule."""
+    """Maps the full CSIP-Aus schedule (as produced by calculate_schedule_values - contiguous, starting no later than
+    now) into a Troca ActivePowerSchedule. Adjacent intervals resolving to the same setpoint are merged, and the final
+    open-ended interval is extended out to now + SCHEDULE_HORIZON. Transitions into an interval with a
+    ramp_time_seconds are stepped every ramp_step (see ramp_segments). Returns None if there's nothing to schedule."""
 
-    horizon = now + SCHEDULE_HORIZON
+    segments = ramp_segments(
+        raw_schedule,
+        lambda v: (values_to_charge_watts(v, max_power_watts),),
+        now,
+        now + SCHEDULE_HORIZON,
+        ramp_step,
+    )
     periods: list[SchedulePeriod] = []
-    last_end: datetime | None = None
-    for scv in raw_schedule:
-        start = max(scv.active_from, now).replace(microsecond=0)
-        end = min(scv.active_to or horizon, horizon).replace(microsecond=0)
-        if end <= start:
-            continue
-
-        kw = _to_troca_kw(values_to_charge_watts(scv.values, max_power_watts))
-        if periods and periods[-1].global_ is not None and periods[-1].global_.value == kw and last_end == start:
-            periods[-1] = SchedulePeriod(periods[-1].start_time, to_troca_timestamp(end), periods[-1].global_)
-        else:
-            periods.append(SchedulePeriod(to_troca_timestamp(start), to_troca_timestamp(end), _bounds(kw)))
-        last_end = end
+    for seg in segments[:MAX_SCHEDULE_PERIODS]:
+        watts = seg.value[0]
+        kw = _to_troca_kw(0.0 if watts is None else watts)
+        periods.append(SchedulePeriod(to_troca_timestamp(seg.start), to_troca_timestamp(seg.end), _bounds(kw)))
 
     if not periods:
         return None
 
-    periods = periods[:MAX_SCHEDULE_PERIODS]
     return ActivePowerSchedule(start_time=periods[0].start_time, end_time=periods[-1].end_time, periods=periods)
 
 
@@ -277,6 +274,65 @@ def _append_segment(segments: list[_Segment], start: datetime, end: datetime, va
         segments[-1] = _Segment(segments[-1].start, end, value)
     else:
         segments.append(_Segment(start, end, value))
+
+
+def _interpolate(
+    previous: tuple[float | None, ...], target: tuple[float | None, ...], fraction: float
+) -> tuple[float | None, ...]:
+    """Linearly interpolates (rounded to whole watts) each component of a value fraction of the way from previous to
+    target. A component that's None at either end can't be interpolated - it jumps straight to target."""
+    return tuple(
+        t if p is None or t is None else float(round(p + (t - p) * fraction))
+        for p, t in zip(previous, target, strict=True)
+    )
+
+
+def ramp_segments(
+    raw_schedule: Sequence[ScheduledControlValues],
+    to_value: Callable[[ActiveValues], tuple[float | None, ...]],
+    now: datetime,
+    horizon: datetime,
+    ramp_step: timedelta,
+) -> list[_Segment]:
+    """Flattens the full CSIP-Aus schedule (contiguous, in order) into non overlapping segments (clipped to start no
+    earlier than now, and end no later than horizon) of to_value(values), merging contiguous segments of the same
+    value.
+
+    An interval's ramp_time_seconds is the time to ramp TO that interval's value from wherever the previous interval
+    left off. This is approximated by stepping every ramp_step - each step holding the value of a linear ramp at the
+    start of that step, so that the target is reached exactly ramp_time_seconds after the interval starts. eg a ramp
+    from 0W to 1000W over 100s with a 25s ramp_step yields 0W, 250W, 500W, 750W (each for 25s) and then 1000W.
+
+    If an interval ends before its ramp completes, the next interval ramps from the value it was left at. The first
+    interval has nothing to ramp from, so it's never ramped - raw_schedule should start early enough to include
+    whatever preceded any ramp still in progress at now (see troca.schedule). A ramp_step of 0 disables ramping."""
+
+    now = now.replace(microsecond=0)
+    horizon = horizon.replace(microsecond=0)
+    segments: list[_Segment] = []
+    previous: tuple[float | None, ...] | None = None  # The value the previous interval finished at
+    for scv in raw_schedule:
+        start = scv.active_from.replace(microsecond=0)
+        end = min(scv.active_to or horizon, horizon).replace(microsecond=0)
+        target = to_value(scv.values)
+
+        reached = target
+        ramp = timedelta(seconds=scv.values.ramp_time_seconds or 0)
+        step_start = start
+        if previous is not None and previous != target and ramp_step > timedelta(0) and ramp > timedelta(0):
+            ramp_end = min(start + ramp, end)
+            while step_start < ramp_end:
+                reached = _interpolate(previous, target, (step_start - start) / ramp)
+                step_end = min(step_start + ramp_step, ramp_end)
+                _append_segment(segments, max(step_start, now), step_end, reached)
+                step_start = step_end
+            if step_start < end:
+                reached = target
+
+        _append_segment(segments, max(step_start, now), end, target)
+        previous = reached
+
+    return segments
 
 
 def _segments_match(applied: list[_Segment], desired: list[_Segment], now: datetime) -> bool:
@@ -338,8 +394,8 @@ def values_to_ocpp_limits(values: ActiveValues, max_power_watts: float) -> tuple
         for no discharge limit
 
     storage_target_watts isn't mapped (it's a setpoint, not a limit - see ocpp_schedule.sync_storage_target),
-    nor are ramp_time_seconds / ramp_percent_max_second_hundredths - OCPP profiles have no concept of a ramp, so
-    every change jumps straight to the new limit."""
+    nor is ramp_percent_max_second_hundredths. ramp_time_seconds is applied separately (see ramp_segments) as
+    OCPP profiles have no concept of a ramp."""
 
     if values.connect is False or values.energize is False:
         return 0.0, 0.0
@@ -360,19 +416,22 @@ def schedule_to_ocpp_profile(
     profile_id: int,
     stack_level: int,
     purpose: OcppChargingProfilePurpose,
+    ramp_step: timedelta,
 ) -> OcppChargingProfile | None:
-    """Maps the full CSIP-Aus schedule (as produced by calculate_schedule_values - contiguous, starting from now)
-    into an absolute OCPP charging profile starting at now. Adjacent intervals resolving to the same limits are
-    merged, and the final open-ended interval is extended out to now + SCHEDULE_HORIZON. Returns None if there's
+    """Maps the full CSIP-Aus schedule (as produced by calculate_schedule_values - contiguous, starting no later than
+    now) into an absolute OCPP charging profile starting at now. Adjacent intervals resolving to the same limits are
+    merged, and the final open-ended interval is extended out to now + SCHEDULE_HORIZON. Transitions into an
+    interval with a ramp_time_seconds are stepped every ramp_step (see ramp_segments). Returns None if there's
     nothing to schedule."""
 
     start_schedule = now.replace(microsecond=0)
-    horizon = start_schedule + SCHEDULE_HORIZON
-    segments: list[_Segment] = []
-    for scv in raw_schedule:
-        start = max(scv.active_from, start_schedule).replace(microsecond=0)
-        end = min(scv.active_to or horizon, horizon).replace(microsecond=0)
-        _append_segment(segments, start, end, values_to_ocpp_limits(scv.values, max_power_watts))
+    segments = ramp_segments(
+        raw_schedule,
+        lambda v: values_to_ocpp_limits(v, max_power_watts),
+        start_schedule,
+        start_schedule + SCHEDULE_HORIZON,
+        ramp_step,
+    )
 
     segments = segments[:MAX_SCHEDULE_PERIODS]
     if not segments:

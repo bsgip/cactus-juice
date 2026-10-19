@@ -14,7 +14,6 @@ from uuid import uuid4
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cactus_juice.crud import fetch_ocpp_metadata
-from cactus_juice.csipaus.controls import calculate_schedule_values
 from cactus_juice.troca.client import TrocaClient
 from cactus_juice.troca.mapping import parse_troca_timestamp, schedule_to_troca, schedules_match, to_troca_timestamp
 from cactus_juice.troca.models import (
@@ -32,6 +31,7 @@ from cactus_juice.troca.models import (
     StructurePair,
     parse_set_charging_profile_parameters,
 )
+from cactus_juice.troca.schedule import calculate_ramp_schedule_values
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +163,11 @@ def requires_push(
 
 
 async def sync_session_schedule(
-    client: TrocaClient, session: AsyncSession, now: datetime, evse_location: LocationId | None = None
+    client: TrocaClient,
+    session: AsyncSession,
+    now: datetime,
+    ramp_step: timedelta,
+    evse_location: LocationId | None = None,
 ) -> None:
     """Calculates the full upcoming schedule of controls and maps it to a Troca schedule for the active session.
     If Troca already has an equivalent schedule for that session - this is a no-op, otherwise the whole schedule
@@ -172,7 +176,8 @@ async def sync_session_schedule(
     The full schedule (rather than just the current value) is pushed so that the station continues to follow it
     even if we lose contact with Troca - the final (open-ended) control is extended far into the future.
 
-    evse_location is the EVSE the schedule is sent to - if None, it's discovered from the active session."""
+    Ramps are stepped every ramp_step (0 disables ramping). evse_location is the EVSE the schedule is sent to - if
+    None, it's discovered from the active session."""
 
     active_session = await fetch_active_session(client)
     if active_session is None:
@@ -190,7 +195,8 @@ async def sync_session_schedule(
         logger.warning("The EVSE's rated power isn't known yet (see poll_metadata) - can't build a schedule.")
         return
 
-    desired = schedule_to_troca(await calculate_schedule_values(session, now), metadata.max_power_watts, now)
+    raw_schedule = await calculate_ramp_schedule_values(session, now, ramp_step)
+    desired = schedule_to_troca(raw_schedule, metadata.max_power_watts, now, ramp_step)
     if desired is None:
         logger.info("No scheduled control values available - nothing to enforce via Troca.")
         return

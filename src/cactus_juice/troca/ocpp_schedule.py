@@ -16,11 +16,11 @@ from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cactus_juice.crud import fetch_ocpp_metadata
-from cactus_juice.csipaus.controls import calculate_schedule_values
 from cactus_juice.csipaus.dto import ScheduledControlValues
 from cactus_juice.troca.client import TrocaClient
 from cactus_juice.troca.mapping import ocpp_profiles_match, schedule_to_ocpp_profile
 from cactus_juice.troca.models import OcppChargingProfile, OcppChargingProfilePurpose, OcppTarget
+from cactus_juice.troca.schedule import calculate_ramp_schedule_values
 
 logger = logging.getLogger(__name__)
 
@@ -97,10 +97,16 @@ def sync_storage_target(raw_schedule: Sequence[ScheduledControlValues], now: dat
 
 
 async def sync_ocpp_schedule(
-    client: TrocaClient, target: OcppTarget, session: AsyncSession, now: datetime, last: PushedProfile | None
+    client: TrocaClient,
+    target: OcppTarget,
+    session: AsyncSession,
+    now: datetime,
+    last: PushedProfile | None,
+    ramp_step: timedelta,
 ) -> PushedProfile | None:
     """Calculates the full upcoming schedule of controls and pushes it to the station as our charging profile (or
     clears our profile if there's no schedule) - unless that's already been done recently (see requires_push).
+    Ramps are stepped every ramp_step (0 disables ramping).
 
     Returns the PushedProfile that should be passed as last on the next call."""
 
@@ -109,7 +115,7 @@ async def sync_ocpp_schedule(
         logger.warning("The EVSE's rated power isn't known yet (see poll_metadata) - can't build a profile.")
         return last
 
-    raw_schedule = await calculate_schedule_values(session, now)
+    raw_schedule = await calculate_ramp_schedule_values(session, now, ramp_step)
     desired = schedule_to_ocpp_profile(
         raw_schedule,
         metadata.max_power_watts,
@@ -117,6 +123,7 @@ async def sync_ocpp_schedule(
         PROFILE_ID,
         PROFILE_STACK_LEVEL,
         PROFILE_PURPOSE,
+        ramp_step,
     )
     sync_storage_target(raw_schedule, now)
     if not requires_push(last, desired, now):

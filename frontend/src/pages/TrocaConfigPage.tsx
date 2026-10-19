@@ -13,6 +13,7 @@ import {
   SegmentedControl,
   Select,
   Stack,
+  Switch,
   Text,
   TextInput,
 } from '@mantine/core'
@@ -35,6 +36,7 @@ import { PageHeading } from '../layout/AppLayout'
 
 const CONFIG_QUERY_KEY = ['troca-config']
 const DISCOVERY_QUERY_KEY = ['troca-discovery']
+const DEFAULT_RAMP_STEP_SECONDS = 3
 
 const SCHEDULE_SYNC_MODES: { value: ScheduleSyncMode; label: string; description: string }[] = [
   {
@@ -57,6 +59,7 @@ interface FormValues {
   basicPassword: string
   connectorId: string | null
   readingPollRateSeconds: number | ''
+  rampEnabled: boolean
   rampStepSeconds: number | ''
   schedulePollRateSeconds: number | ''
   metadataPollRateSeconds: number | ''
@@ -75,7 +78,9 @@ function valuesFromConfig(config: TrocaConfig): FormValues {
     basicPassword: '',
     connectorId: config.connectorId,
     readingPollRateSeconds: config.readingPollRateSeconds ?? 20,
-    rampStepSeconds: config.rampStepSeconds ?? 3,
+    // A ramp step of 0 disables ramping - the step input falls back to the default so re-enabling is one click
+    rampEnabled: config.rampStepSeconds !== 0,
+    rampStepSeconds: config.rampStepSeconds || DEFAULT_RAMP_STEP_SECONDS,
     schedulePollRateSeconds: config.schedulePollRateSeconds ?? 10,
     metadataPollRateSeconds: config.metadataPollRateSeconds ?? 30,
     scheduleSyncMode: config.scheduleSyncMode ?? 'ocpp',
@@ -160,7 +165,8 @@ export function TrocaConfigPage() {
       basicPassword: (value) =>
         !isConfigured && !value.trim() ? 'Required the first time a connection is configured' : null,
       readingPollRateSeconds: (value) => (typeof value === 'number' && value > 0 ? null : 'Must be greater than 0'),
-      rampStepSeconds: (value) => (typeof value === 'number' && value > 0 ? null : 'Must be greater than 0'),
+      rampStepSeconds: (value, values) =>
+        !values.rampEnabled || (typeof value === 'number' && value > 0) ? null : 'Must be greater than 0',
       schedulePollRateSeconds: (value) => (typeof value === 'number' && value > 0 ? null : 'Must be greater than 0'),
       metadataPollRateSeconds: (value) => (typeof value === 'number' && value > 0 ? null : 'Must be greater than 0'),
       ocppEvseNb: (value) => (value === '' || (typeof value === 'number' && value >= 0) ? null : 'Must be 0 or more'),
@@ -267,7 +273,7 @@ export function TrocaConfigPage() {
               basicPassword: values.basicPassword,
               connectorId: values.connectorId,
               readingPollRateSeconds: Number(values.readingPollRateSeconds),
-              rampStepSeconds: Number(values.rampStepSeconds),
+              rampStepSeconds: values.rampEnabled ? Number(values.rampStepSeconds) : 0,
               schedulePollRateSeconds: Number(values.schedulePollRateSeconds),
               metadataPollRateSeconds: Number(values.metadataPollRateSeconds),
               scheduleSyncMode: values.scheduleSyncMode,
@@ -321,21 +327,14 @@ export function TrocaConfigPage() {
                   {...form.getInputProps('readingPollRateSeconds')}
                 />
                 <NumberInput
-                  label="Ramp step"
-                  description="Seconds per step in a ramping schedule"
-                  min={1}
-                  required
-                  {...form.getInputProps('rampStepSeconds')}
-                />
-              </Group>
-              <Group grow>
-                <NumberInput
                   label="Schedule poll rate"
                   description="Seconds between polls for charge schedule updates"
                   min={1}
                   required
                   {...form.getInputProps('schedulePollRateSeconds')}
                 />
+              </Group>
+              <Group grow>
                 <NumberInput
                   label="Metadata poll rate"
                   description="Seconds between polls for EVSE nameplate ratings"
@@ -343,6 +342,30 @@ export function TrocaConfigPage() {
                   required
                   {...form.getInputProps('metadataPollRateSeconds')}
                 />
+                <div />
+              </Group>
+            </Stack>
+
+            <Divider />
+
+            <Stack gap="sm">
+              <Text fw={600}>Ramping</Text>
+              <Switch
+                label="Ramp between controls"
+                description="Steps the schedule towards each control's value over its ramp time. When disabled, every change jumps straight to the new value."
+                {...form.getInputProps('rampEnabled', { type: 'checkbox' })}
+              />
+              <Group grow>
+                <NumberInput
+                  label="Ramp step"
+                  description="Seconds per step in a ramping schedule"
+                  min={1}
+                  allowDecimal={false}
+                  required={form.values.rampEnabled}
+                  disabled={!form.values.rampEnabled}
+                  {...form.getInputProps('rampStepSeconds')}
+                />
+                <div />
               </Group>
             </Stack>
 

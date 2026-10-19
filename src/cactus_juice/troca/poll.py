@@ -58,7 +58,7 @@ class ClientState:
     readings_poll: Pollable  # Poll status of the readings
     schedule_poll: Pollable  # Poll status of the charge schedule
     metadata_poll: Pollable  # Poll status of the connected EVSE metadata
-    ramp_step: timedelta
+    ramp_step: timedelta  # How long each step of a ramp should be (0 disables ramping)
 
     # The latest reading received so far - each poll only asks Troca for readings after this
     last_reading_at: datetime
@@ -226,13 +226,15 @@ async def poll_schedules(state: ClientState, session: AsyncSession, now: datetim
 
     if state.schedule_sync_mode == ScheduleSyncMode.TROCA_SESSION:
         evse_location = None if state.evse_id is None else LocationId(state.evse_id, StructureLevel.EVSE)
-        await sync_session_schedule(state.client, session, now, evse_location)
+        await sync_session_schedule(state.client, session, now, state.ramp_step, evse_location)
         return
 
     target = await resolve_ocpp_target(state)
     if target is None:
         return
-    state.pushed_profile = await sync_ocpp_schedule(state.client, target, session, now, state.pushed_profile)
+    state.pushed_profile = await sync_ocpp_schedule(
+        state.client, target, session, now, state.pushed_profile, state.ramp_step
+    )
 
 
 async def poll_prices(state: ClientState, session: AsyncSession, now: datetime) -> None:

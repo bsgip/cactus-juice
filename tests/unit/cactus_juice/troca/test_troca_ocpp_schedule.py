@@ -26,6 +26,7 @@ from cactus_juice.troca.ocpp_schedule import (
 NOW = datetime(2026, 9, 28, 4, 0, 0, tzinfo=UTC)
 TARGET = OcppTarget("qocppConnector2.1", "2.1", "FR*TRI*E123")
 MAX_POWER = 40000.0
+RAMP_STEP = timedelta(seconds=3)
 
 
 def raw_schedule(import_limit_watts: int | None) -> list[ScheduledControlValues]:
@@ -35,7 +36,7 @@ def raw_schedule(import_limit_watts: int | None) -> list[ScheduledControlValues]
 
 def profile(import_limit_watts: int | None, now: datetime = NOW) -> OcppChargingProfile:
     p = schedule_to_ocpp_profile(
-        raw_schedule(import_limit_watts), MAX_POWER, now, PROFILE_ID, PROFILE_STACK_LEVEL, PROFILE_PURPOSE
+        raw_schedule(import_limit_watts), MAX_POWER, now, PROFILE_ID, PROFILE_STACK_LEVEL, PROFILE_PURPOSE, RAMP_STEP
     )
     assert p is not None
     return p
@@ -87,17 +88,17 @@ def patch_db(monkeypatch: pytest.MonkeyPatch):
     async def fetch_ocpp_metadata(session):
         return db["metadata"]
 
-    async def calculate_schedule_values(session, now):
+    async def calculate_ramp_schedule_values(session, now, ramp_step):
         return db["schedule"]
 
     monkeypatch.setattr(ocpp_schedule, "fetch_ocpp_metadata", fetch_ocpp_metadata)
-    monkeypatch.setattr(ocpp_schedule, "calculate_schedule_values", calculate_schedule_values)
+    monkeypatch.setattr(ocpp_schedule, "calculate_ramp_schedule_values", calculate_ramp_schedule_values)
     return db
 
 
 async def test_sync_ocpp_schedule_pushes(patch_db):
     client = FakeTrocaClient()
-    result = await sync_ocpp_schedule(client, TARGET, None, NOW, None)  # ty: ignore[invalid-argument-type]
+    result = await sync_ocpp_schedule(client, TARGET, None, NOW, None, RAMP_STEP)  # ty: ignore[invalid-argument-type]
 
     assert client.set_calls == [(TARGET, PROFILE_EVSE_ID, profile(7000))]
     assert not client.clear_calls
@@ -105,13 +106,13 @@ async def test_sync_ocpp_schedule_pushes(patch_db):
 
     # Unchanged schedule is a no-op on the next poll
     later = NOW + timedelta(seconds=10)
-    assert await sync_ocpp_schedule(client, TARGET, None, later, result) is result  # ty: ignore[invalid-argument-type]
+    assert await sync_ocpp_schedule(client, TARGET, None, later, result, RAMP_STEP) is result  # ty: ignore[invalid-argument-type]
     assert len(client.set_calls) == 1
 
 
 async def test_sync_ocpp_schedule_rejected(patch_db):
     client = FakeTrocaClient(set_status="Rejected")
-    result = await sync_ocpp_schedule(client, TARGET, None, NOW, None)  # ty: ignore[invalid-argument-type]
+    result = await sync_ocpp_schedule(client, TARGET, None, NOW, None, RAMP_STEP)  # ty: ignore[invalid-argument-type]
     assert result == PushedProfile(profile(7000), NOW, False)
 
 
@@ -119,7 +120,7 @@ async def test_sync_ocpp_schedule_rejected(patch_db):
 async def test_sync_ocpp_schedule_clears(patch_db, clear_status: str, accepted: bool):
     patch_db["schedule"] = []
     client = FakeTrocaClient(clear_status=clear_status)
-    result = await sync_ocpp_schedule(client, TARGET, None, NOW, None)  # ty: ignore[invalid-argument-type]
+    result = await sync_ocpp_schedule(client, TARGET, None, NOW, None, RAMP_STEP)  # ty: ignore[invalid-argument-type]
 
     assert client.clear_calls == [(TARGET, PROFILE_ID)]
     assert not client.set_calls
@@ -131,7 +132,7 @@ async def test_sync_ocpp_schedule_no_rated_power(patch_db, metadata: OCPPMetadat
     patch_db["metadata"] = metadata
     client = FakeTrocaClient()
     last = PushedProfile(profile(1), NOW - timedelta(days=1), True)
-    assert await sync_ocpp_schedule(client, TARGET, None, NOW, last) is last  # ty: ignore[invalid-argument-type]
+    assert await sync_ocpp_schedule(client, TARGET, None, NOW, last, RAMP_STEP) is last  # ty: ignore[invalid-argument-type]
     assert not client.set_calls and not client.clear_calls
 
 
@@ -162,10 +163,10 @@ async def test_sync_ocpp_schedule_ignores_storage_target(patch_db, caplog: pytes
     """storage_target_watts is stubbed (see sync_storage_target) - it's logged but has no effect on the profile"""
     patch_db["schedule"] = [scv(0, None, 5000)]
     client = FakeTrocaClient()
-    await sync_ocpp_schedule(client, TARGET, None, NOW, None)  # ty: ignore[invalid-argument-type]
+    await sync_ocpp_schedule(client, TARGET, None, NOW, None, RAMP_STEP)  # ty: ignore[invalid-argument-type]
 
     expected = schedule_to_ocpp_profile(
-        [scv(0, None, None)], MAX_POWER, NOW, PROFILE_ID, PROFILE_STACK_LEVEL, PROFILE_PURPOSE
+        [scv(0, None, None)], MAX_POWER, NOW, PROFILE_ID, PROFILE_STACK_LEVEL, PROFILE_PURPOSE, RAMP_STEP
     )
     assert client.set_calls == [(TARGET, PROFILE_EVSE_ID, expected)]
     assert "storage_target_watts=5000W" in caplog.text

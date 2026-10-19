@@ -97,7 +97,7 @@ class TrocaConfigRequest(BaseModel):
     basic_password: str | None = None
     connector_id: str | None = None
     reading_poll_rate_seconds: int = Field(default=20, gt=0)
-    ramp_step_seconds: int = Field(default=3, gt=0)
+    ramp_step_seconds: int = Field(default=3, ge=0)  # 0 disables ramping
     schedule_poll_rate_seconds: int = Field(default=10, gt=0)
     metadata_poll_rate_seconds: int = Field(default=30, gt=0)
     schedule_sync_mode: ScheduleSyncMode = ScheduleSyncMode.OCPP

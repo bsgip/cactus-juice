@@ -812,7 +812,7 @@ def test_dercontrol_to_csipaus_control_field_mapping(
         start=1_700_000_000,
         duration=1800,
         status=EventStatusType.Active,
-        rampTms=42,
+        rampTms=4200,  # hundredths of a second
         reply_to=reply_to,
         response_required=response_required,
         opModConnect=True,
@@ -843,6 +843,16 @@ def test_dercontrol_to_csipaus_control_field_mapping(
     assert control.load_limit_watts == 333
     assert control.generation_limit_watts == 444
     assert control.storage_target_watts == 555
+
+
+@pytest.mark.parametrize(
+    "ramp_tms, expected_seconds",
+    [(0, 0), (6000, 60), (149, 1), (151, 2), (30, 0), (65535, 655)],
+)
+def test_dercontrol_to_csipaus_control_ramp_tms_hundredths(ramp_tms: int, expected_seconds: int):
+    """rampTms is in hundredths of a second - ramp_time_seconds must be whole seconds"""
+    control = dercontrol_to_csipaus_control(_derc(rampTms=ramp_tms), primacy=1)
+    assert control.ramp_time_seconds == expected_seconds
 
 
 def test_dercontrol_to_csipaus_control_all_optionals_none():

@@ -323,7 +323,7 @@ class TrocaConfig(Base):
     )  # How many seconds between polls to the Troca API for readings
     ramp_step_seconds: Mapped[int] = mapped_column(
         Integer, server_default="3"
-    )  # How long each step in a ramping schedule should be
+    )  # How long each step in a ramping schedule should be (0 disables ramping)
     schedule_poll_rate_seconds: Mapped[int] = mapped_column(
         Integer, server_default="10"
     )  # How often the charge schedule should be polled for updates
