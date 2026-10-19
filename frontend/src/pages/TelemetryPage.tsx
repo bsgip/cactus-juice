@@ -130,12 +130,50 @@ function buildStepRows(
     })
 }
 
+/** connect=false or energize=false means the EV is held at 0W for the interval (mirrors
+ * cactus_juice.troca.mapping.values_to_charge_watts / values_to_ocpp_limits) - null/true imposes no limit. */
+function isPoweredOff(s: ScheduledValues): boolean {
+  return s.connect === false || s.energize === false
+}
+
+/** The scheduled power series - forced to 0 whenever the interval is disconnected/de-energised, so the chart
+ * reflects what's actually sent to Troca rather than the (overridden) raw limits. */
 function scheduleToIntervals(schedule: ScheduledValues[], field: keyof ScheduledValues): Interval[] {
   return schedule.map((s) => ({
     start: new Date(s.activeFrom).getTime(),
     end: s.activeTo ? new Date(s.activeTo).getTime() : null,
-    value: s[field] as number | null,
+    value: isPoweredOff(s) ? 0 : (s[field] as number | null),
   }))
+}
+
+function poweredOffLabel(s: ScheduledValues): string {
+  if (s.connect === false && s.energize === false) return 'Disconnected + de-energised'
+  return s.connect === false ? 'Disconnected' : 'De-energised'
+}
+
+/** A shaded span of the chart marking a disconnected/de-energised interval. */
+interface ScheduleMarker {
+  start: number
+  end: number
+  label: string
+}
+
+/** Every disconnected/de-energised interval of the schedule, clipped to [windowStartMs, windowEndMs] -
+ * contiguous intervals with the same label are merged into a single marker. */
+function scheduleToMarkers(schedule: ScheduledValues[], windowStartMs: number, windowEndMs: number): ScheduleMarker[] {
+  const markers: ScheduleMarker[] = []
+  for (const s of schedule) {
+    if (!isPoweredOff(s)) continue
+    const start = Math.max(new Date(s.activeFrom).getTime(), windowStartMs)
+    const end = Math.min(s.activeTo ? new Date(s.activeTo).getTime() : windowEndMs, windowEndMs)
+    if (end <= start) continue
+
+    const label = poweredOffLabel(s)
+    const last = markers[markers.length - 1]
+    if (last && last.end === start && last.label === label) last.end = end
+    else markers.push({ start, end, label })
+  }
+  return markers
 }
 
 /** OCPP readings are instantaneous samples - each one's value is treated as holding until the next sample
@@ -217,6 +255,7 @@ interface TimeSeriesPanelProps {
   nowMs: number
   yAxisDomain?: [number, number]
   extraReferenceLines?: { y: number; label: string }[]
+  markers?: ScheduleMarker[]
 }
 
 function TimeSeriesPanel({
@@ -229,6 +268,7 @@ function TimeSeriesPanel({
   nowMs,
   yAxisDomain,
   extraReferenceLines = [],
+  markers = [],
 }: TimeSeriesPanelProps) {
   return (
     <Paper withBorder p="md">
@@ -262,6 +302,7 @@ function TimeSeriesPanel({
             label: rl.label,
           })),
         ]}
+        referenceAreas={markers.map((m) => ({ x1: m.start, x2: m.end, color: 'red.6', label: m.label }))}
       />
     </Paper>
   )
@@ -371,7 +412,9 @@ export function TelemetryPage() {
       windowEndMs,
     )
 
-    return { windowStartMs, windowEndMs, nowMs, power, reactivePower, price, frequency, voltage, soc, satecLabels }
+    const scheduleMarkers = scheduleToMarkers(snapshot.schedule, windowStartMs, windowEndMs)
+
+    return { windowStartMs, windowEndMs, nowMs, scheduleMarkers, power, reactivePower, price, frequency, voltage, soc, satecLabels }
   }, [snapshot])
 
   const satecSeries = useMemo(
@@ -455,6 +498,7 @@ export function TelemetryPage() {
             title="Power"
             unit=" W"
             data={chartData.power}
+            markers={chartData.scheduleMarkers}
             windowStartMs={chartData.windowStartMs}
             windowEndMs={chartData.windowEndMs}
             nowMs={chartData.nowMs}
