@@ -390,10 +390,10 @@ def values_to_ocpp_limits(values: ActiveValues, max_power_watts: float) -> tuple
     session schedules, OCPP profiles can express genuine limits so these map far more directly:
       * connect=False or energize=False -> no charging or discharging (there's no way to genuinely open the
         contactor via OCPP charging profiles)
-      * charge limit: the import and load limits (if set) - OCPP requires a limit, so max_power_watts is used
-        when neither is set
-      * discharge limit: the export and generation limits (if set) as a negative number (per OCPP 2.1), or None
-        for no discharge limit
+      * charge limit: the import and load limits (if set), capped by max_power_watts - OCPP requires a limit, so
+        max_power_watts is used when neither is set
+      * discharge limit: the export and generation limits (if set), capped by max_power_watts, as a negative
+        number (per OCPP 2.1), or None for no discharge limit
 
     storage_target_watts isn't mapped (it's a setpoint, not a limit - see ocpp_schedule.sync_storage_target),
     nor is ramp_percent_max_second_hundredths. ramp_time_seconds is applied separately (see ramp_segments) as
@@ -403,10 +403,10 @@ def values_to_ocpp_limits(values: ActiveValues, max_power_watts: float) -> tuple
         return 0.0, 0.0
 
     charge_caps = [lim for lim in (values.import_limit_watts, values.load_limit_watts) if lim is not None]
-    charge_limit = float(max(0, min(charge_caps, default=max_power_watts)))
+    charge_limit = float(max(0, min(charge_caps + [max_power_watts])))
 
     discharge_caps = [lim for lim in (values.export_limit_watts, values.generation_limit_watts) if lim is not None]
-    discharge_limit = -float(max(0, min(discharge_caps))) + 0.0 if discharge_caps else None
+    discharge_limit = -float(max(0, min(discharge_caps + [max_power_watts]))) + 0.0 if discharge_caps else None
 
     return charge_limit, discharge_limit
 
