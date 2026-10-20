@@ -1,11 +1,16 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cactus_juice.api.deps import get_session
-from cactus_juice.crud import fetch_csipaus_config, update_csipaus_config
+from cactus_juice.crud import (
+    delete_controls_finishing_after,
+    delete_dynamic_prices_finishing_after,
+    fetch_csipaus_config,
+    update_csipaus_config,
+)
 from cactus_juice.model import CSIPAusConfig
 
 router = APIRouter(prefix="/api/config", tags=["config"])
@@ -56,6 +61,13 @@ class CSIPAusConfigResponse(BaseModel):
             serca_pem=config.serca_pem.decode() if config.serca_pem is not None else None,
             has_key_pem=config.key_pem is not None,
         )
+
+
+class ClearScheduleResponse(BaseModel):
+    """How many current/upcoming controls/prices were removed (their responses are removed alongside them)"""
+
+    deleted_controls: int
+    deleted_dynamic_prices: int
 
 
 async def _read_upload(upload: UploadFile | None) -> bytes | None:
@@ -125,3 +137,13 @@ async def put_config(  # noqa: ANN201
 
     updated = await fetch_csipaus_config(session)
     return CSIPAusConfigResponse.from_model(updated)
+
+
+@router.post("/clear-schedule", response_model=ClearScheduleResponse)
+async def clear_schedule(session: AsyncSession = Depends(get_session)) -> ClearScheduleResponse:
+    """Deletes all current/upcoming CSIPAusControl and CSIPAusDynamicPrice records (and their responses)"""
+    now = datetime.now(UTC)
+    deleted_controls = await delete_controls_finishing_after(session, now)
+    deleted_dynamic_prices = await delete_dynamic_prices_finishing_after(session, now)
+    await session.commit()
+    return ClearScheduleResponse(deleted_controls=deleted_controls, deleted_dynamic_prices=deleted_dynamic_prices)

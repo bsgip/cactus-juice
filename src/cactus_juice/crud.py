@@ -1,7 +1,7 @@
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, func, insert, or_, select, update
+from sqlalchemy import and_, delete, func, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -173,6 +173,20 @@ async def fetch_unsent_control_responses(
     return (await session.execute(stmt)).scalars().all()
 
 
+async def delete_controls_finishing_after(session: AsyncSession, epoch: datetime) -> int:
+    """Deletes every CSIPAusControl (and their CSIPAusControlResponses) whose finished_at is after epoch - i.e. any
+    current/upcoming control. Cancelled/superseded times are NOT considered. Returns the number of controls deleted.
+
+    does NOT commit any transaction."""
+
+    control_ids = select(CSIPAusControl.csipaus_control_id).where(CSIPAusControl.finished_at > epoch)
+    await session.execute(
+        delete(CSIPAusControlResponse).where(CSIPAusControlResponse.csipaus_control_id.in_(control_ids))
+    )
+    stmt = delete(CSIPAusControl).where(CSIPAusControl.finished_at > epoch).returning(CSIPAusControl.csipaus_control_id)
+    return len((await session.execute(stmt)).scalars().all())
+
+
 async def fetch_dynamic_prices_with_mrids(
     session: AsyncSession, mrids: Iterable[str], start: int = 0, limit: int = 500
 ) -> Sequence[CSIPAusDynamicPrice]:
@@ -208,6 +222,24 @@ async def fetch_dynamic_prices_active_from(
     )
 
     return (await session.execute(stmt)).scalars().all()
+
+
+async def delete_dynamic_prices_finishing_after(session: AsyncSession, epoch: datetime) -> int:
+    """Deletes every CSIPAusDynamicPrice (and their CSIPAusDynamicPriceResponses) whose finished_at is after epoch -
+    i.e. any current/upcoming price. Cancelled times are NOT considered. Returns the number of prices deleted.
+
+    does NOT commit any transaction."""
+
+    price_ids = select(CSIPAusDynamicPrice.csipaus_dynamic_price_id).where(CSIPAusDynamicPrice.finished_at > epoch)
+    await session.execute(
+        delete(CSIPAusDynamicPriceResponse).where(CSIPAusDynamicPriceResponse.csipaus_dynamic_price_id.in_(price_ids))
+    )
+    stmt = (
+        delete(CSIPAusDynamicPrice)
+        .where(CSIPAusDynamicPrice.finished_at > epoch)
+        .returning(CSIPAusDynamicPrice.csipaus_dynamic_price_id)
+    )
+    return len((await session.execute(stmt)).scalars().all())
 
 
 async def upsert_dynamic_prices(session: AsyncSession, dynamic_prices: list[CSIPAusDynamicPrice]) -> None:

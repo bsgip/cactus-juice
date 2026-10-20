@@ -1,4 +1,4 @@
-import { apiGet, apiSendForm } from './http'
+import { apiGet, apiSendForm, apiSendJson } from './http'
 
 /** Mirrors cactus_juice.api.routers.config.CSIPAusConfigResponse */
 export interface CSIPAusConfig {
@@ -80,4 +80,21 @@ export async function updateCsipausConfig(values: CSIPAusConfigUpdate): Promise<
   if (values.sercaPemFile) formData.append('serca_pem', values.sercaPemFile)
 
   return fromWire(await apiSendForm<CSIPAusConfigWire>('/api/config', 'PUT', formData))
+}
+
+/** Mirrors cactus_juice.api.routers.config.ClearScheduleResponse */
+export interface ClearScheduleResult {
+  deletedControls: number
+  deletedDynamicPrices: number
+}
+
+interface ClearScheduleResultWire {
+  deleted_controls: number
+  deleted_dynamic_prices: number
+}
+
+/** Deletes all current/upcoming controls + dynamic prices (and their responses) */
+export async function clearCsipausSchedule(): Promise<ClearScheduleResult> {
+  const wire = await apiSendJson<ClearScheduleResultWire>('/api/config/clear-schedule', 'POST', {})
+  return { deletedControls: wire.deleted_controls, deletedDynamicPrices: wire.deleted_dynamic_prices }
 }

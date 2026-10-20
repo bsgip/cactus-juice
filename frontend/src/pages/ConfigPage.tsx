@@ -13,12 +13,12 @@ import {
 } from '@mantine/core'
 import { useForm } from '@mantine/form'
 import { notifications } from '@mantine/notifications'
-import { IconAlertCircle, IconDeviceFloppy } from '@tabler/icons-react'
-import { useEffect } from 'react'
+import { IconAlertCircle, IconDeviceFloppy, IconTrash } from '@tabler/icons-react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { formatApiError } from '../api/http'
-import { fetchCsipausConfig, updateCsipausConfig, type CSIPAusConfig } from '../api/config'
+import { clearCsipausSchedule, fetchCsipausConfig, updateCsipausConfig, type CSIPAusConfig } from '../api/config'
 import { PageHeading } from '../layout/AppLayout'
 import { PemFileField } from './PemFileField'
 
@@ -99,6 +99,28 @@ export function ConfigPage() {
       notifications.show({
         color: 'red',
         title: 'Save failed',
+        message: formatApiError(err),
+        autoClose: false,
+      })
+    },
+  })
+
+  const [confirmingClear, setConfirmingClear] = useState(false)
+
+  const clearMutation = useMutation({
+    mutationFn: clearCsipausSchedule,
+    onSuccess: (result) => {
+      setConfirmingClear(false)
+      notifications.show({
+        color: 'teal',
+        title: 'Cleared',
+        message: `Removed ${result.deletedControls} control(s) and ${result.deletedDynamicPrices} dynamic price(s)`,
+      })
+    },
+    onError: (err) => {
+      notifications.show({
+        color: 'red',
+        title: 'Clear failed',
         message: formatApiError(err),
         autoClose: false,
       })
@@ -204,6 +226,31 @@ export function ConfigPage() {
             </Group>
           </Stack>
         </form>
+      </Paper>
+
+      <Paper withBorder p="lg" mt="lg">
+        <Group justify="space-between" wrap="nowrap">
+          <Stack gap={4}>
+            <Text fw={600}>Clear schedule</Text>
+            <Text size="sm" c="dimmed">
+              Deletes all current/upcoming controls and dynamic prices (plus any of their queued responses).
+            </Text>
+          </Stack>
+          {confirmingClear ? (
+            <Group gap={4} wrap="nowrap">
+              <Button color="red" loading={clearMutation.isPending} onClick={() => clearMutation.mutate()}>
+                Confirm clear
+              </Button>
+              <Button variant="default" onClick={() => setConfirmingClear(false)}>
+                Cancel
+              </Button>
+            </Group>
+          ) : (
+            <Button color="red" variant="light" leftSection={<IconTrash size={16} />} onClick={() => setConfirmingClear(true)}>
+              Clear schedule
+            </Button>
+          )}
+        </Group>
       </Paper>
     </div>
   )

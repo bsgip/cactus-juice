@@ -21,6 +21,8 @@ from cactus_juice.crud import (
     TROCA_CONFIG_VALUE_COLUMNS,
     add_ocpp_readings,
     create_satec_config,
+    delete_controls_finishing_after,
+    delete_dynamic_prices_finishing_after,
     delete_satec_config,
     fetch_active_default,
     fetch_controls_active_from,
@@ -2235,3 +2237,89 @@ async def test_csipaus_default_rejects_overlapping_active_range(pg_base_config):
         )
         with pytest.raises(IntegrityError):
             await session.flush()
+
+
+@pytest.mark.parametrize(
+    "epoch, expected_remaining_ids, expected_remaining_response_ids",
+    [
+        (datetime(2025, 1, 1, tzinfo=UTC), [], []),
+        (datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC), [1], [1, 2, 3]),
+        (datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC), [1, 2], [1, 2, 3, 4]),
+        (datetime(2026, 1, 1, 0, 15, 0, tzinfo=UTC), [1, 2, 3, 4, 5, 6, 7], [1, 2, 3, 4, 5, 6]),
+    ],
+)
+async def test_delete_controls_finishing_after(
+    pg_base_config, epoch: datetime, expected_remaining_ids: list[int], expected_remaining_response_ids: list[int]
+):
+    async with generate_async_session(pg_base_config) as session:
+        deleted = await delete_controls_finishing_after(session, epoch)
+        await session.commit()
+    assert deleted == 7 - len(expected_remaining_ids)
+
+    async with generate_async_session(pg_base_config) as session:
+        remaining = (
+            (
+                await session.execute(
+                    select(CSIPAusControl.csipaus_control_id).order_by(CSIPAusControl.csipaus_control_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        remaining_responses = (
+            (
+                await session.execute(
+                    select(CSIPAusControlResponse.csipaus_control_response_id).order_by(
+                        CSIPAusControlResponse.csipaus_control_response_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert list(remaining) == expected_remaining_ids
+    assert list(remaining_responses) == expected_remaining_response_ids
+
+
+@pytest.mark.parametrize(
+    "epoch, expected_remaining_ids, expected_remaining_response_ids",
+    [
+        (datetime(2025, 1, 1, tzinfo=UTC), [], []),
+        (datetime(2026, 1, 1, 0, 5, 0, tzinfo=UTC), [1], [1, 2, 3]),
+        (datetime(2026, 1, 1, 0, 10, 0, tzinfo=UTC), [1, 2], [1, 2, 3, 4]),
+        (datetime(2026, 1, 1, 0, 15, 0, tzinfo=UTC), [1, 2, 3, 4, 5, 6, 7], [1, 2, 3, 4, 5, 6]),
+    ],
+)
+async def test_delete_dynamic_prices_finishing_after(
+    pg_base_config, epoch: datetime, expected_remaining_ids: list[int], expected_remaining_response_ids: list[int]
+):
+    async with generate_async_session(pg_base_config) as session:
+        deleted = await delete_dynamic_prices_finishing_after(session, epoch)
+        await session.commit()
+    assert deleted == 7 - len(expected_remaining_ids)
+
+    async with generate_async_session(pg_base_config) as session:
+        remaining = (
+            (
+                await session.execute(
+                    select(CSIPAusDynamicPrice.csipaus_dynamic_price_id).order_by(
+                        CSIPAusDynamicPrice.csipaus_dynamic_price_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        remaining_responses = (
+            (
+                await session.execute(
+                    select(CSIPAusDynamicPriceResponse.csipaus_dynamic_price_response_id).order_by(
+                        CSIPAusDynamicPriceResponse.csipaus_dynamic_price_response_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert list(remaining) == expected_remaining_ids
+    assert list(remaining_responses) == expected_remaining_response_ids

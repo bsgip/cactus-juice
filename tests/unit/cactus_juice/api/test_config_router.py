@@ -1,5 +1,6 @@
 import os
 from collections.abc import AsyncGenerator, Generator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from assertical.fixtures.postgres import generate_async_session
@@ -127,3 +128,48 @@ def test_put_config_clear_flag_removes_pem(client: TestClient):
     )
     assert response.status_code == 200
     assert response.json()["certificate_pem"] is None
+
+
+def test_clear_schedule_empty(client: TestClient):
+    response = client.post("/api/config/clear-schedule")
+    assert response.status_code == 200
+    assert response.json() == {"deleted_controls": 0, "deleted_dynamic_prices": 0}
+
+
+def test_clear_schedule(pg_base_config, client: TestClient):
+    """All base_config controls/prices finished in 2026-01-01 (the past) - add a current one of each and only those
+    should be removed"""
+    now = datetime.now(UTC)
+    with pg_base_config.cursor() as cursor:
+        cursor.execute(
+            "INSERT INTO csipaus_control (primacy, mrid, duration_seconds, started_at) VALUES (1, 'live', 300, %s)",
+            (now - timedelta(seconds=60),),
+        )
+        cursor.execute(
+            "INSERT INTO csipaus_dynamic_price (primacy, mrid, duration_seconds, started_at)"
+            " VALUES (1, 'live', 300, %s)",
+            (now + timedelta(seconds=60),),
+        )
+        cursor.execute(
+            "INSERT INTO csipaus_control_response (csipaus_control_id, response_status, end_device_lfdi, not_before)"
+            " SELECT id, 1, 'abc', now() FROM csipaus_control WHERE mrid = 'live'"
+        )
+        cursor.execute(
+            "INSERT INTO csipaus_dynamic_price_response (csipaus_dynamic_price_id, response_status, end_device_lfdi,"
+            " not_before) SELECT id, 1, 'abc', now() FROM csipaus_dynamic_price WHERE mrid = 'live'"
+        )
+    pg_base_config.commit()
+
+    response = client.post("/api/config/clear-schedule")
+    assert response.status_code == 200
+    assert response.json() == {"deleted_controls": 1, "deleted_dynamic_prices": 1}
+
+    with pg_base_config.cursor() as cursor:
+        cursor.execute("SELECT COUNT(*) FROM csipaus_control")
+        assert cursor.fetchone()[0] == 7
+        cursor.execute("SELECT COUNT(*) FROM csipaus_dynamic_price")
+        assert cursor.fetchone()[0] == 7
+        cursor.execute("SELECT COUNT(*) FROM csipaus_control_response")
+        assert cursor.fetchone()[0] == 6
+        cursor.execute("SELECT COUNT(*) FROM csipaus_dynamic_price_response")
+        assert cursor.fetchone()[0] == 6
