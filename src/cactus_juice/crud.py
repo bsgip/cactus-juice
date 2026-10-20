@@ -684,6 +684,16 @@ SATEC_READING_VALUE_COLUMNS = (
     "pf_l1",
     "pf_l2",
     "pf_l3",
+    "v_source",
+    "i_ch1",
+    "i_ch2",
+    "i_sum",
+    "kw_ch1",
+    "kw_ch2",
+    "kw_sum",
+    "v_ripple",
+    "v_load_ch1",
+    "v_load_ch2",
 )
 
 

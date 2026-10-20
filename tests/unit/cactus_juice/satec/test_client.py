@@ -17,7 +17,7 @@ from cactus_juice.satec.client import (
     reading_to_model,
     reconcile_meters,
 )
-from cactus_juice.satec.meter import Reading
+from cactus_juice.satec.meter import ACUDC_MODEL, AcuDCMeter, Reading, SatecMeter
 
 
 @dataclass
@@ -123,6 +123,17 @@ def test_reconcile_meters_adds_new_configs():
     assert set(state.meters) == {1}
     assert state.meters[1].changed_at == config.changed_at
     assert state.meters[1].poll_rate == timedelta(seconds=config.poll_rate_seconds)
+
+
+@pytest.mark.parametrize(
+    "model, expected_type", [("em133", SatecMeter), ("em235", SatecMeter), (ACUDC_MODEL, AcuDCMeter)]
+)
+def test_polled_meter_new_instance_builds_meter_for_model(model: str, expected_type: type):
+    config = make_satec_config(1, datetime(2026, 1, 1, tzinfo=UTC), model=model)
+
+    pm = PolledMeter.new_instance(config)
+
+    assert isinstance(pm.meter, expected_type)
 
 
 def test_reconcile_meters_removes_deleted_configs():

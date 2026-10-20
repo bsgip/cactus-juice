@@ -22,6 +22,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { formatApiError } from '../api/http'
 import {
+  DC_MODEL,
   createSatecConfig,
   deleteSatecConfig,
   fetchSatecConfigs,
@@ -38,6 +39,7 @@ const SATEC_CONFIGS_QUERY_KEY = ['satec-config']
 const MODEL_OPTIONS: { value: SatecModel; label: string }[] = [
   { value: 'em133', label: 'EM133 / EM133-XM' },
   { value: 'em235', label: 'EM235 / PM335 PRO' },
+  { value: 'acudc260', label: 'Accuenergy AcuDC 260 (DC)' },
 ]
 
 const PARITY_OPTIONS: { value: SatecParity; label: string }[] = [
@@ -113,9 +115,9 @@ function toInput(values: FormValues): SatecConfigInput {
     baud: Number(values.baud),
     parity: values.parity,
     timeoutSeconds: Number(values.timeoutSeconds),
-    includePhases: values.includePhases,
+    includePhases: values.model !== DC_MODEL && values.includePhases,
     includeEnergy: values.includeEnergy,
-    floatMode: values.floatMode,
+    floatMode: values.model !== DC_MODEL && values.floatMode,
   }
 }
 
@@ -138,6 +140,23 @@ function SatecConfigCard({
       pollRateSeconds: (value) => (typeof value === 'number' && value > 0 ? null : 'Must be greater than 0'),
     },
   })
+
+  const isDc = form.values.model === DC_MODEL
+
+  /** Switching to/from the DC model resets the options that don't apply to it, and its parity to the factory
+   * default (AcuDC ships as Even, the SATEC units here run None). */
+  const handleModelChange = (value: string | null) => {
+    if (!value) return
+    const model = value as SatecModel
+    form.setFieldValue('model', model)
+    if ((model === DC_MODEL) !== isDc) {
+      form.setFieldValue('parity', model === DC_MODEL ? 'E' : 'N')
+    }
+    if (model === DC_MODEL) {
+      form.setFieldValue('includePhases', false)
+      form.setFieldValue('floatMode', false)
+    }
+  }
 
   const saveMutation = useMutation({
     mutationFn: (values: FormValues) =>
@@ -213,6 +232,7 @@ function SatecConfigCard({
               data={MODEL_OPTIONS}
               allowDeselect={false}
               {...form.getInputProps('model')}
+              onChange={handleModelChange}
             />
           </Group>
 
@@ -254,14 +274,25 @@ function SatecConfigCard({
           <Divider label="Sampling" labelPosition="left" />
 
           <Group>
-            <Switch label="Include phases" {...form.getInputProps('includePhases', { type: 'checkbox' })} />
+            {!isDc && (
+              <Switch label="Include phases" {...form.getInputProps('includePhases', { type: 'checkbox' })} />
+            )}
             <Switch label="Include energy" {...form.getInputProps('includeEnergy', { type: 'checkbox' })} />
-            <Switch
-              label="Float32 registers"
-              description="Meter is already configured for float32"
-              {...form.getInputProps('floatMode', { type: 'checkbox' })}
-            />
+            {!isDc && (
+              <Switch
+                label="Float32 registers"
+                description="Meter is already configured for float32"
+                {...form.getInputProps('floatMode', { type: 'checkbox' })}
+              />
+            )}
           </Group>
+
+          {isDc && (
+            <Text c="dimmed" size="sm">
+              DC meter - source voltage plus per-channel current and power are always sampled. Make sure the meter
+              is set to PRIMARY real-time readings (front panel P19), otherwise currents are raw shunt input.
+            </Text>
+          )}
 
           <Group justify="flex-end">
             {isNew && onCancel && (
@@ -306,7 +337,7 @@ export function SatecConfigPage() {
     <div style={{ maxWidth: 820 }}>
       <PageHeading
         title="Satec Config"
-        subtitle="Connection details for each SATEC meter being polled over Modbus. Add as many as you have meters."
+        subtitle="Connection details for each SATEC or Accuenergy AcuDC meter being polled over Modbus. Add as many as you have meters."
       />
 
       {isError && (

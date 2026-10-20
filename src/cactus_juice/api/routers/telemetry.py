@@ -159,23 +159,26 @@ class OCPPMetadataResponse(BaseModel):
 class SatecReadingResponse(BaseModel):
     """A subset of a SatecReading's totals block - just what the telemetry chart needs. label identifies which
     SatecConfig (meter) this reading came from, so readings from different meters can be told apart/charted as
-    separate series."""
+    separate series.
+
+    A DC (AcuDC) meter has no AC totals - its kw_sum/v_source stand in for total_kw/v_avg_ln so it still charts
+    alongside the AC meters, while total_kvar/frequency are left None."""
 
     label: str
     reading_start: datetime
-    total_kw: float
-    total_kvar: float
-    v_avg_ln: float
-    frequency: float
+    total_kw: float | None
+    total_kvar: float | None
+    v_avg_ln: float | None
+    frequency: float | None
 
     @staticmethod
     def from_model(r: SatecReading, label: str) -> "SatecReadingResponse":
         return SatecReadingResponse(
             label=label,
             reading_start=r.reading_start,
-            total_kw=r.total_kw,
+            total_kw=r.total_kw if r.total_kw is not None else r.kw_sum,
             total_kvar=r.total_kvar,
-            v_avg_ln=r.v_avg_ln,
+            v_avg_ln=r.v_avg_ln if r.v_avg_ln is not None else r.v_source,
             frequency=r.frequency,
         )
 

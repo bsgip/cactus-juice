@@ -1,6 +1,10 @@
 import { apiDelete, apiGet, apiSendJson } from './http'
 
-export type SatecModel = 'em133' | 'em235'
+export type SatecModel = 'em133' | 'em235' | 'acudc260'
+
+/** The DC (Accuenergy AcuDC 260) model - has no phases or float32 register mode, unlike the SATEC models. */
+export const DC_MODEL: SatecModel = 'acudc260'
+
 export type SatecParity = 'N' | 'E' | 'O'
 
 /** Mirrors cactus_juice.api.routers.satec.SatecConfigResponse. Unlike CSIPAusConfig/TrocaConfig, many of these

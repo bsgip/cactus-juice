@@ -1,5 +1,8 @@
 """SATEC EM133 / EM133-XM / EM235 / PM335 PRO Modbus device model.
 
+Also models an Accuenergy AcuDC 260 series DC meter (ACUDC_MODEL). That is a
+different register model entirely -- see the AcuDC section below.
+
 Both families share the same Modbus architecture -- native register numbering
 0-65535, 32-bit values in two adjacent registers LOW WORD FIRST with the low
 word on an even address, and the same base addresses for the real-time
@@ -22,11 +25,16 @@ Requires: pip install 'pymodbus[serial]==3.15.0'
 
 from __future__ import annotations
 
+import re
 import struct
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 from pymodbus.client import ModbusBaseSyncClient, ModbusSerialClient, ModbusTcpClient
+from pymodbus.exceptions import ModbusException
+from pymodbus.pdu import ModbusPDU
 
 # --------------------------------------------------------------------------
 # Device identification / factory settings (section 3.7, native addresses)
@@ -325,7 +333,7 @@ class DeviceInfo:
 @dataclass
 class Reading:
     timestamp: float
-    serial: int
+    serial: int | str
     values: dict = field(default_factory=dict)
 
     def public(self) -> dict:
@@ -335,13 +343,12 @@ class Reading:
         return "  ".join(f"{k}={v:.3f}" for k, v in self.public().items())
 
 
-class SatecMeter:
-    def __init__(self, profile: Profile, client: ModbusBaseSyncClient, unit: int = 1, float_mode: bool = False) -> None:
-        self.profile = profile
+class ModbusMeter:
+    """Transport plumbing shared by every meter class."""
+
+    def __init__(self, client: ModbusBaseSyncClient, unit: int = 1) -> None:
         self.client = client
         self.unit = unit
-        self.float_mode = float_mode and profile.float_capable
-        self._info: DeviceInfo | None = None
 
     def connect(self) -> bool:
         return self.client.connect()
@@ -349,26 +356,37 @@ class SatecMeter:
     def close(self) -> None:
         self.client.close()
 
-    # -- low level ---------------------------------------------------------
+    def _call(self, method: Callable[..., ModbusPDU], *args: Any, **kwargs: Any) -> ModbusPDU:  # noqa: ANN401
+        """Handle the pymodbus 3.x rename of slave= to device_id=, and turn a no-response ModbusIOException --
+        which is not an OSError -- into one."""
+        try:
+            try:
+                return method(*args, device_id=self.unit, **kwargs)
+            except TypeError:
+                return method(*args, slave=self.unit, **kwargs)
+        except ModbusException as exc:
+            raise OSError(f"no valid reply from unit {self.unit}: {exc}") from exc
 
     def _read(self, address: int, count: int) -> list[int]:
-        """Read holding registers. Handles the pymodbus 3.x rename of
-        slave= to device_id=."""
-        try:
-            rr = self.client.read_holding_registers(address, count=count, device_id=self.unit)
-        except TypeError:
-            rr = self.client.read_holding_registers(address, count=count, slave=self.unit)  # ty:ignore[unknown-argument]
+        rr = self._call(self.client.read_holding_registers, address, count=count)
         if rr.isError():
             raise OSError(f"Modbus read failed at {address}: {rr}")
         return rr.registers
 
     def _write(self, address: int, value: int) -> None:
-        try:
-            rq = self.client.write_register(address, value, device_id=self.unit)
-        except TypeError:
-            rq = self.client.write_register(address, value, slave=self.unit)  # ty:ignore[unknown-argument]
+        rq = self._call(self.client.write_register, address, value)
         if rq.isError():
             raise OSError(f"Modbus write failed at {address}: {rq}")
+
+
+class SatecMeter(ModbusMeter):
+    def __init__(self, profile: Profile, client: ModbusBaseSyncClient, unit: int = 1, float_mode: bool = False) -> None:
+        super().__init__(client, unit)
+        self.profile = profile
+        self.float_mode = float_mode and profile.float_capable
+        self._info: DeviceInfo | None = None
+
+    # -- low level ---------------------------------------------------------
 
     @staticmethod
     def _u32(regs: list[int], i: int) -> int:
@@ -468,6 +486,231 @@ class SatecMeter:
         self.float_mode = True
 
 
+# --------------------------------------------------------------------------
+# Accuenergy AcuDC 260 series (AcuDC-261 MID / AcuDC-262) DC meters
+#
+# A different vendor with a different register model, so this is its own
+# class rather than a SATEC profile. Sources: the AcuDC 260 series user
+# manual rev 1.0.1, chapter 7, and the AcuDC-261 / AcuDC-262 Modbus map
+# spreadsheets v1.02 from accuenergy.com. NOT YET CONFIRMED AGAINST HARDWARE.
+#
+# Differences from SATEC that will bite if code is copied across:
+#
+#   * 32- and 64-bit values are HIGH word first -- the opposite of SATEC.
+#     The manual's worked example decodes 0x42EF 0xF593 as 119.98 V.
+#
+#   * Measurements are IEEE float32 (real-time) and float64 (energy and
+#     charge) in engineering units. There are no integer scale tables.
+#
+#   * The serial number is an ASCII string ("MDA250500001"), not a uint32.
+#
+#   * Factory parity is ambiguous. The register table gives the default as
+#     0 = even, the setup chapter says None1 (8N1). Read front panel P02.
+#     P04 "Modbus RTU Enable" switched off silences RS-485 entirely.
+#
+#   * Register 0x101C picks primary (scaled by the shunt ratio) or secondary
+#     (raw input) real-time readings. The register table gives the default
+#     as 0 = secondary, the setup chapter says primary.
+# --------------------------------------------------------------------------
+
+ACUDC_MODEL = "acudc260"
+
+# Real-time float32 block. The spreadsheet's overview ends this block at
+# 0x301F, but the detail table and the manual put V Load at 0x3020-0x3023.
+# The two are read separately so a firmware that stops at 0x301F does not
+# fail the main read.
+ACUDC_REALTIME = (
+    0x3000,
+    [
+        "v_source",
+        "i_ch1",
+        "i_ch2",
+        "i_sum",
+        "kw_ch1",
+        "kw_ch2",
+        "kw_sum",
+        "v_ripple",
+        "i_ripple_ch1",
+        "i_ripple_ch2",
+        "demand_i_ch1",
+        "demand_i_ch2",
+        "demand_i_sum",
+        "demand_kw_ch1",
+        "demand_kw_ch2",
+        "demand_kw_sum",
+    ],
+)
+ACUDC_VLOAD = (0x3020, ["v_load_ch1", "v_load_ch2"])
+
+# Energy (kWh) then charge (Ah), float64, 0x4000-0x405F. The display shows
+# both in those units. The range quoted in the manual is signed, so net
+# values can go negative.
+ACUDC_ENERGY = (
+    0x4000,
+    [
+        f"{unit}_{kind}_{ch}"
+        for unit in ("kwh", "ah")
+        for ch in ("ch1", "ch2", "sum")
+        for kind in ("import", "export", "net", "total")
+    ],
+)
+
+# Power unit on the wire is not stated anywhere in the documentation. The
+# display shows kW at 1 W resolution, and Accuenergy's other float maps use
+# W, so W is assumed and scaled to kW to match the field names.
+# UNCONFIRMED -- check V x I against kw_ch1 if this looks out by 1000.
+ACUDC_POWER_SCALE = 0.001
+ACUDC_POWER_FIELDS = ("kw_ch1", "kw_ch2", "kw_sum", "demand_kw_ch1", "demand_kw_ch2", "demand_kw_sum")
+
+ACUDC_REG_RT_TYPE = 0x101C  # 0 = secondary, 1 = primary
+ACUDC_REG_FIRMWARE = 0xF000  # version, release date, patch -- ASCII
+ACUDC_REG_BOOTLOADER = 0xF010  # model name, version, date, patch -- ASCII
+ACUDC_REG_SERIAL = 0xF040  # 16 registers, ASCII
+ACUDC_REG_MODEL = 0xF052  # model type, voltage input, current input
+
+ACUDC_MODEL_TYPES = {0: "AcuDC-262", 1: "AcuDC-261", 2: "AcuDC-262"}
+ACUDC_CURRENT_INPUTS = {
+    0: "A1 shunt",
+    1: "A2 4-20 mA Hall",
+    2: "A3 +-5 V Hall",
+    3: "A4 external MID shunt",
+}
+
+# Documented serial format MDAYYMMabcde -- used to detect whether strings
+# arrive byte-swapped, as SATEC's do.
+ACUDC_SERIAL_RE = re.compile(r"^[A-Z]{3}\d{9}$")
+
+
+@dataclass
+class AcuDCInfo:
+    serial: str
+    model: str
+    current_input: str
+    firmware: str
+    bootloader: str
+
+    def __str__(self) -> str:
+        return f"{self.model} serial {self.serial} ({self.current_input}, fw {self.firmware}, boot {self.bootloader})"
+
+
+class AcuDCMeter(ModbusMeter):
+    """Same public interface as SatecMeter, so the polling client does not care which one it has."""
+
+    def __init__(self, client: ModbusBaseSyncClient, unit: int = 1) -> None:
+        super().__init__(client, unit)
+        self._info: AcuDCInfo | None = None
+        self._swap_strings = False
+        self._rt_primary: int | None = None
+        self._vload_ok = True
+
+    # -- low level ---------------------------------------------------------
+
+    @staticmethod
+    def _floats(regs: list[int], width: int) -> list[float]:
+        """Decode float32 (width 2) or float64 (width 4), high word first."""
+        n = len(regs) // width
+        raw = struct.pack(f">{len(regs)}H", *regs)
+        return list(struct.unpack(f">{n}{'f' if width == 2 else 'd'}", raw))
+
+    def _ascii(self, regs: list[int]) -> str:
+        order = "<" if self._swap_strings else ">"
+        raw = struct.pack(f"{order}{len(regs)}H", *regs)
+        return raw.split(b"\0")[0].decode("ascii", errors="replace").strip(" \xff\ufffd")
+
+    def _read_block(self, block: tuple, width: int) -> dict:
+        start, fields = block
+        values = self._floats(self._read(start, len(fields) * width), width)
+        out = dict(zip(fields, values, strict=True))
+        for name in ACUDC_POWER_FIELDS:
+            if name in out:
+                out[name] *= ACUDC_POWER_SCALE
+        return out
+
+    # -- identification ----------------------------------------------------
+
+    def _read_serial(self) -> str:
+        regs = self._read(ACUDC_REG_SERIAL, 16)
+        serial = self._ascii(regs)
+        if not ACUDC_SERIAL_RE.match(serial):
+            self._swap_strings = not self._swap_strings
+            swapped = self._ascii(regs)
+            if ACUDC_SERIAL_RE.match(swapped):
+                return swapped
+            self._swap_strings = not self._swap_strings
+        return serial
+
+    def _optional(self, address: int, count: int) -> list[int] | None:
+        """Read a register range that only matters for display. Different
+        firmware revisions document these blocks with different lengths, so
+        an exception response is tolerated rather than fatal."""
+        try:
+            return self._read(address, count)
+        except OSError:
+            return None
+
+    def identify(self, refresh: bool = False) -> AcuDCInfo:
+        """Read serial number, model and firmware. Cached after the first
+        call. Only the serial is mandatory -- it is what tells two meters
+        apart, so failing to read it must fail loudly."""
+        if self._info is not None and not refresh:
+            return self._info
+        serial = self._read_serial()
+
+        firmware = bootloader = "unknown"
+        r = self._optional(ACUDC_REG_FIRMWARE, 6)
+        if r:
+            firmware = f"{self._ascii(r[0:2])}p{self._ascii(r[5:6])} ({self._ascii(r[2:5])})"
+        r = self._optional(ACUDC_REG_BOOTLOADER, 8)
+        if r:
+            bootloader = f"{self._ascii(r[0:2])} {self._ascii(r[2:4])}p{self._ascii(r[7:8])}"
+
+        model, current_input = "AcuDC 260 series", "input unknown"
+        r = self._optional(ACUDC_REG_MODEL, 3)
+        if r:
+            model = ACUDC_MODEL_TYPES.get(r[0], f"AcuDC model type {r[0]}")
+            current_input = ACUDC_CURRENT_INPUTS.get(r[2], f"current input type {r[2]}")
+
+        r = self._optional(ACUDC_REG_RT_TYPE, 1)
+        self._rt_primary = r[0] if r else None
+
+        self._info = AcuDCInfo(
+            serial=serial, model=model, current_input=current_input, firmware=firmware, bootloader=bootloader
+        )
+        return self._info
+
+    # -- measurements ------------------------------------------------------
+
+    def realtime(self) -> dict:
+        return self._read_block(ACUDC_REALTIME, 2)
+
+    def load_voltages(self) -> dict:
+        """Load-side voltages, only meaningful with cable loss compensation.
+        Dropped for the rest of the connection if the firmware does not serve
+        them."""
+        if not self._vload_ok:
+            return {}
+        try:
+            return self._read_block(ACUDC_VLOAD, 2)
+        except OSError:
+            self._vload_ok = False
+            return {}
+
+    def energies(self) -> dict:
+        return self._read_block(ACUDC_ENERGY, 4)
+
+    def sample(self, phases: bool = False, energy: bool = False) -> Reading:
+        """phases is accepted for interface compatibility and ignored -- a DC
+        meter has no phases, and its per-channel values are always read."""
+        info = self.identify()
+        values = self.realtime()
+        values.update(self.load_voltages())
+        if energy:
+            values.update(self.energies())
+        if self._rt_primary is not None:
+            values["_rt_primary"] = self._rt_primary
+        return Reading(timestamp=time.time(), serial=info.serial, values=values)
+
+
 def build_client(
     *,
     host: str | None,
@@ -483,3 +726,11 @@ def build_client(
     if port is None:
         raise ValueError("Either host (Modbus/TCP) or port (serial device) must be specified")
     return ModbusSerialClient(port=port, baudrate=baud, bytesize=8, parity=parity, stopbits=1, timeout=timeout)
+
+
+def build_meter(model: str, client: ModbusBaseSyncClient, *, unit: int, float_mode: bool) -> SatecMeter | AcuDCMeter:
+    """Builds the meter for a model key - either a PROFILES key (SATEC) or ACUDC_MODEL. float_mode only
+    applies to SATEC profiles that are float_capable."""
+    if model == ACUDC_MODEL:
+        return AcuDCMeter(client, unit=unit)
+    return SatecMeter(PROFILES[model], client, unit=unit, float_mode=float_mode)

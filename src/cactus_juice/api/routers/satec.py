@@ -11,8 +11,8 @@ from cactus_juice.model import SatecConfig
 
 router = APIRouter(prefix="/api/satec-config", tags=["satec-config"])
 
-# Mirrors satec.meter.PROFILES' keys / the --model/--parity argparse choices.
-SatecModel = Literal["em133", "em235"]
+# Mirrors satec.meter.PROFILES' keys (plus satec.meter.ACUDC_MODEL) / the --model/--parity argparse choices.
+SatecModel = Literal["em133", "em235", "acudc260"]
 SatecParity = Literal["N", "E", "O"]
 
 

@@ -60,14 +60,14 @@ export interface OcppMetadata {
 
 /** Mirrors cactus_juice.api.routers.telemetry.SatecReadingResponse - label identifies which SatecConfig
  * (meter) this reading came from, so readings from different meters can be told apart/charted as separate
- * series. */
+ * series. A DC meter reports null totalKvar/frequency. */
 export interface SatecReading {
   label: string
   readingStart: string
-  totalKw: number
-  totalKvar: number
-  vAvgLn: number
-  frequency: number
+  totalKw: number | null
+  totalKvar: number | null
+  vAvgLn: number | null
+  frequency: number | null
 }
 
 /** Mirrors cactus_juice.api.routers.telemetry.TaskHealthResponse. lastRunAt is null when the task is registered
@@ -150,10 +150,10 @@ interface OcppMetadataWire {
 interface SatecReadingWire {
   label: string
   reading_start: string
-  total_kw: number
-  total_kvar: number
-  v_avg_ln: number
-  frequency: number
+  total_kw: number | null
+  total_kvar: number | null
+  v_avg_ln: number | null
+  frequency: number | null
 }
 
 interface TaskHealthWire {

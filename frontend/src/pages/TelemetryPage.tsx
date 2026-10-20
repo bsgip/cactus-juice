@@ -240,11 +240,14 @@ function satecReadingsToIntervals(
   windowEndMs: number,
   scale: number,
 ): Interval[] {
-  return readings.map((r, i) => ({
-    start: new Date(r.readingStart).getTime(),
-    end: i + 1 < readings.length ? new Date(readings[i + 1].readingStart).getTime() : windowEndMs,
-    value: r[field] * scale,
-  }))
+  return readings.map((r, i) => {
+    const value = r[field]
+    return {
+      start: new Date(r.readingStart).getTime(),
+      end: i + 1 < readings.length ? new Date(readings[i + 1].readingStart).getTime() : windowEndMs,
+      value: value === null ? null : value * scale,
+    }
+  })
 }
 
 /** Dynamic prices can overlap (multiple tariff primacies active at once) - at each moment, the row with the

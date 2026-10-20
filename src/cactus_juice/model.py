@@ -389,7 +389,7 @@ class SatecConfig(Base):
     poll_rate_seconds: Mapped[float] = mapped_column(DOUBLE_PRECISION)
 
     # Connection (mirrors --model/--port/--host/--port-tcp/--unit/--baud/--parity/--timeout)
-    model: Mapped[str] = mapped_column(String)  # PROFILES key, e.g. "em133"/"em235"
+    model: Mapped[str] = mapped_column(String)  # PROFILES key, e.g. "em133"/"em235" - or ACUDC_MODEL "acudc260"
     host: Mapped[str | None] = mapped_column(String, nullable=True)  # Set to use Modbus/TCP instead of serial RTU
     port: Mapped[str | None] = mapped_column(String, nullable=True)  # Serial device, e.g. /dev/ttyUSB0
     port_tcp: Mapped[int] = mapped_column(Integer, server_default="502")
@@ -405,10 +405,12 @@ class SatecConfig(Base):
 
 
 class SatecReading(Base):
-    """Represents a single sample taken from a SatecConfig meter (see satec/meter.py SatecMeter.sample()).
+    """Represents a single sample taken from a SatecConfig meter (see satec/meter.py SatecMeter.sample() /
+    AcuDCMeter.sample()).
 
-    totals/auxiliary values are always sampled so are non-nullable. Phase values are only sampled when the
-    owning SatecConfig has include_phases=True, so remain NULL otherwise."""
+    totals/auxiliary values are always sampled by a SATEC (AC) meter, phase values only when the owning SatecConfig
+    has include_phases=True. DC values are always sampled by an AcuDC meter. Whichever don't apply to the owning
+    SatecConfig's model remain NULL."""
 
     __tablename__ = "satec_reading"
     __table_args__ = (
@@ -425,28 +427,28 @@ class SatecReading(Base):
     reading_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # When was the reading valid for?
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    # Totals block - always sampled (see satec/meter.py TOTALS_FIELDS)
-    total_kw: Mapped[float] = mapped_column(DOUBLE_PRECISION)
-    total_kvar: Mapped[float] = mapped_column(DOUBLE_PRECISION)
-    total_kva: Mapped[float] = mapped_column(DOUBLE_PRECISION)
-    total_pf: Mapped[float] = mapped_column(DOUBLE_PRECISION)
-    total_pf_lag: Mapped[float] = mapped_column(DOUBLE_PRECISION)
-    total_pf_lead: Mapped[float] = mapped_column(DOUBLE_PRECISION)
-    kw_import: Mapped[float] = mapped_column(DOUBLE_PRECISION)
-    kw_export: Mapped[float] = mapped_column(DOUBLE_PRECISION)
-    kvar_import: Mapped[float] = mapped_column(DOUBLE_PRECISION)
-    kvar_export: Mapped[float] = mapped_column(DOUBLE_PRECISION)
-    v_avg_ln: Mapped[float] = mapped_column(DOUBLE_PRECISION)
-    v_avg_ll: Mapped[float] = mapped_column(DOUBLE_PRECISION)
-    i_avg: Mapped[float] = mapped_column(DOUBLE_PRECISION)
+    # Totals block - always sampled by SATEC meters (see satec/meter.py TOTALS_FIELDS)
+    total_kw: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    total_kvar: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    total_kva: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    total_pf: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    total_pf_lag: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    total_pf_lead: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    kw_import: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    kw_export: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    kvar_import: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    kvar_export: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    v_avg_ln: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    v_avg_ll: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    i_avg: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
 
-    # Auxiliary block - always sampled, restricted to the subset common to every Profile
+    # Auxiliary block - always sampled by SATEC meters, restricted to the subset common to every Profile
     # (see satec/meter.py PROFILES)
-    frequency: Mapped[float] = mapped_column(DOUBLE_PRECISION)
-    frequency_mhz: Mapped[float] = mapped_column(DOUBLE_PRECISION)
-    i_neutral: Mapped[float] = mapped_column(DOUBLE_PRECISION)
-    v_unbalance: Mapped[float] = mapped_column(DOUBLE_PRECISION)
-    i_unbalance: Mapped[float] = mapped_column(DOUBLE_PRECISION)
+    frequency: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    frequency_mhz: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    i_neutral: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    v_unbalance: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    i_unbalance: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
 
     # Phase block - only sampled when the owning SatecConfig has include_phases=True
     v1: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
@@ -467,3 +469,15 @@ class SatecReading(Base):
     pf_l1: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
     pf_l2: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
     pf_l3: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+
+    # DC block - always sampled by AcuDC meters (see satec/meter.py ACUDC_REALTIME/ACUDC_VLOAD)
+    v_source: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    i_ch1: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    i_ch2: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    i_sum: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    kw_ch1: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    kw_ch2: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    kw_sum: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    v_ripple: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)
+    v_load_ch1: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)  # Firmware may not serve these
+    v_load_ch2: Mapped[float | None] = mapped_column(DOUBLE_PRECISION, nullable=True)

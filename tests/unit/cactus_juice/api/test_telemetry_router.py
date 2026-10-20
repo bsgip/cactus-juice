@@ -12,6 +12,7 @@ from psycopg import Connection
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cactus_juice.api.deps import get_session
+from cactus_juice.api.routers.telemetry import SatecReadingResponse
 from cactus_juice.crud import insert_satec_readings, upsert_task_health
 from cactus_juice.main import create_app
 from cactus_juice.model import SatecReading
@@ -139,6 +140,29 @@ def test_get_snapshot_seeded(seeded_client: TestClient, pg_base_config: Connecti
         assert actual["total_kvar"] == expected_reading.total_kvar
         assert actual["v_avg_ln"] == expected_reading.v_avg_ln
         assert actual["frequency"] == expected_reading.frequency
+
+
+def test_satec_reading_response_ac_reading_uses_totals():
+    reading = generate_class_instance(SatecReading, seed=1)
+
+    response = SatecReadingResponse.from_model(reading, "AC meter")
+
+    assert response.total_kw == reading.total_kw
+    assert response.v_avg_ln == reading.v_avg_ln
+
+
+def test_satec_reading_response_dc_reading_falls_back_to_dc_values():
+    """A DC (AcuDC) reading has no AC totals - kw_sum/v_source stand in for total_kw/v_avg_ln."""
+    reading = generate_class_instance(
+        SatecReading, seed=1, total_kw=None, total_kvar=None, v_avg_ln=None, frequency=None
+    )
+
+    response = SatecReadingResponse.from_model(reading, "DC meter")
+
+    assert response.total_kw == reading.kw_sum
+    assert response.v_avg_ln == reading.v_source
+    assert response.total_kvar is None
+    assert response.frequency is None
 
 
 def test_get_snapshot_task_health(client: TestClient, pg_empty_config: Connection):

@@ -113,6 +113,14 @@ def test_post_satec_config_rejects_invalid_model(client: TestClient):
     assert response.status_code == 422
 
 
+def test_post_satec_config_acudc(client: TestClient):
+    response = client.post(
+        "/api/satec-config", json={**SAMPLE_BODY, "model": "acudc260", "include_phases": False, "parity": "E"}
+    )
+    assert response.status_code == 201
+    assert response.json()["model"] == "acudc260"
+
+
 def test_post_satec_config_adds_alongside_existing(seeded_client: TestClient):
     response = seeded_client.post("/api/satec-config", json=SAMPLE_BODY)
     assert response.status_code == 201

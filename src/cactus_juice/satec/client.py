@@ -8,7 +8,7 @@ from cactus_juice.crud import SATEC_READING_VALUE_COLUMNS, fetch_satec_configs, 
 from cactus_juice.db import DatabaseConnection
 from cactus_juice.error import PollError
 from cactus_juice.model import SatecConfig, SatecReading
-from cactus_juice.satec.meter import PROFILES, Reading, SatecMeter, build_client
+from cactus_juice.satec.meter import AcuDCMeter, Reading, SatecMeter, build_client, build_meter
 
 logger = logging.getLogger(__name__)
 
@@ -21,14 +21,14 @@ READING_VALUE_COLUMNS = tuple(c for c in SATEC_READING_VALUE_COLUMNS if c not in
 
 @dataclass(slots=True)
 class PolledMeter:
-    """Tracks the live SatecMeter connection + polling schedule for a single SatecConfig row."""
+    """Tracks the live SatecMeter/AcuDCMeter connection + polling schedule for a single SatecConfig row."""
 
     satec_config_id: int
     changed_at: datetime  # SatecConfig.changed_at as of when this PolledMeter was last (re)built
     poll_rate: timedelta
     include_phases: bool
     include_energy: bool
-    meter: SatecMeter
+    meter: SatecMeter | AcuDCMeter
     last_poll: datetime = MIN_DATE
     connected: bool = False
     last_error: Exception | None = None  # The exception from the most recent poll (None if it succeeded)
@@ -43,7 +43,7 @@ class PolledMeter:
             parity=config.parity,
             timeout=config.timeout_seconds,
         )
-        meter = SatecMeter(PROFILES[config.model], client, unit=config.unit, float_mode=config.float_mode)
+        meter = build_meter(config.model, client, unit=config.unit, float_mode=config.float_mode)
         return PolledMeter(
             satec_config_id=config.satec_config_id,
             changed_at=config.changed_at,
