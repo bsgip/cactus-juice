@@ -366,3 +366,15 @@ class TrocaClient:
             target, "ClearChargingProfile", {"chargingProfileId": charging_profile_id}
         )
         return (response or {}).get("status", "")
+
+    async def notify_allowed_energy_transfer(
+        self, target: OcppTarget, transaction_id: str, allowed_energy_transfer: list[str]
+    ) -> str:
+        """OCPP 2.1 NotifyAllowedEnergyTransfer via the passthrough - tells the station which energy transfer modes
+        (eg DC, DC_BPT) are allowed for transaction_id. Returns the station's response status (eg Accepted)."""
+        response = await self.send_ocpp_command(
+            target,
+            "NotifyAllowedEnergyTransfer",
+            {"transactionId": transaction_id, "allowedEnergyTransfer": allowed_energy_transfer},
+        )
+        return (response or {}).get("status", "")

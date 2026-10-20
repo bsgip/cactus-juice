@@ -5,6 +5,7 @@ import pytest
 from aiohttp import web
 
 from cactus_juice.troca.client import TROCA_PAGE_SIZE, TrocaApiError, TrocaClient
+from cactus_juice.troca.models import OcppTarget
 
 RESPONSE_BODY = '[{"connectorId": "abc"}]'
 
@@ -129,3 +130,26 @@ async def test_get_list_with_limit_is_one_page(paged_troca: tuple[str, list[dict
 
     assert len(readings) == 3
     assert queries == [{"limit": "3", "offset": "5"}]
+
+
+async def test_notify_allowed_energy_transfer(aiohttp_server):
+    requests: list[tuple[str, dict]] = []
+
+    async def _handle(request: web.Request) -> web.Response:
+        requests.append((request.path, await request.json()))
+        return web.json_response({"status": "Accepted"})
+
+    app = web.Application()
+    app.router.add_post("/{connector}/ocpp/{version}/command/{message}/{station}", _handle)
+    server = await aiohttp_server(app)
+
+    target = OcppTarget("qocppConnector2.1", "2.1", "station-1")
+    async with TrocaClient(str(server.make_url("")), "user", "pass") as client:
+        assert await client.notify_allowed_energy_transfer(target, "tx-1", ["DC", "DC_BPT"]) == "Accepted"
+
+    assert requests == [
+        (
+            "/qocppConnector2.1/ocpp/2.1/command/NotifyAllowedEnergyTransfer/station-1",
+            {"payload": {"transactionId": "tx-1", "allowedEnergyTransfer": ["DC", "DC_BPT"]}},
+        )
+    ]

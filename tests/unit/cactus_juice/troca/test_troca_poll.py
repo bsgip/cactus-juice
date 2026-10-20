@@ -22,6 +22,7 @@ from cactus_juice.troca.models import (
     OcppTarget,
     OcppVariable,
     ScheduleSyncMode,
+    SessionData,
     Station,
     StructureLevel,
 )
@@ -29,6 +30,7 @@ from cactus_juice.troca.poll import (
     POLL_EPOCH,
     ClientState,
     Pollable,
+    poll_allowed_energy_transfer,
     poll_required,
     poll_schedules,
     resolve_ocpp_target,
@@ -354,6 +356,7 @@ async def test_run_polls_raises_failures_after_running_every_poll(monkeypatch: p
         poll, "poll_readings", fake_poll("readings", TrocaApiError(503, "GET", "/metering", "unavailable"))
     )
     monkeypatch.setattr(poll, "poll_metadata", fake_poll("metadata"))
+    monkeypatch.setattr(poll, "poll_allowed_energy_transfer", fake_poll("energy transfer"))
     monkeypatch.setattr(poll, "poll_schedules", fake_poll("schedules", ConnectionError()))
     monkeypatch.setattr(poll, "poll_prices", fake_poll("prices"))
 
@@ -363,7 +366,7 @@ async def test_run_polls_raises_failures_after_running_every_poll(monkeypatch: p
     with pytest.raises(PollError) as exc_info:
         await poll.run_polls(state)
 
-    assert called == ["readings", "metadata", "schedules", "prices"]
+    assert called == ["readings", "metadata", "energy transfer", "schedules", "prices"]
     assert [type(e) for _, e in exc_info.value.failures] == [TrocaApiError, ConnectionError]
     assert "GET /metering -> 503: unavailable" in str(exc_info.value)
     assert "ConnectionError" in str(exc_info.value)
@@ -391,6 +394,7 @@ async def test_run_polls_keeps_reporting_failure_until_that_poll_succeeds(monkey
 
     monkeypatch.setattr(poll, "poll_readings", poll_readings)
     monkeypatch.setattr(poll, "poll_metadata", poll_metadata)
+    monkeypatch.setattr(poll, "poll_allowed_energy_transfer", noop)
     monkeypatch.setattr(poll, "poll_schedules", noop)
     monkeypatch.setattr(poll, "poll_prices", noop)
 
@@ -415,3 +419,65 @@ async def test_run_polls_keeps_reporting_failure_until_that_poll_succeeds(monkey
     await poll.run_polls(state)
     assert called == ["metadata"]
     assert state.failures == {}
+
+
+@dataclass
+class EnergyTransferFakeTrocaClient(FakeTrocaClient):
+    notifications: list[tuple[str, str, list[str]]] = field(default_factory=list)  # (station, transaction, modes)
+
+    async def notify_allowed_energy_transfer(
+        self, target: OcppTarget, transaction_id: str, allowed_energy_transfer: list[str]
+    ) -> str:
+        self.notifications.append((target.station_name, transaction_id, allowed_energy_transfer))
+        return "Accepted"
+
+
+async def test_poll_allowed_energy_transfer_once_per_session(monkeypatch: pytest.MonkeyPatch):
+    active: list[SessionData | None] = [None]
+
+    async def fetch_active_session(client):
+        return active[0]
+
+    monkeypatch.setattr(poll, "fetch_active_session", fetch_active_session)
+    client = EnergyTransferFakeTrocaClient([connector("qocppConnector2.1")], [station("FR*TRI*E123")])
+    state = client_state(client)
+
+    # No session - or a session without a transaction yet - notifies nothing
+    await poll_allowed_energy_transfer(state, None, NOW)  # ty: ignore[invalid-argument-type]
+    active[0] = SessionData(session_id="session-1", transaction_id=None)
+    await poll_allowed_energy_transfer(state, None, NOW)  # ty: ignore[invalid-argument-type]
+    assert client.notifications == []
+
+    # Notified once at the start of the session (not on every poll)
+    active[0] = SessionData(session_id="session-1", transaction_id="tx-1")
+    await poll_allowed_energy_transfer(state, None, NOW)  # ty: ignore[invalid-argument-type]
+    await poll_allowed_energy_transfer(state, None, NOW)  # ty: ignore[invalid-argument-type]
+    assert client.notifications == [("FR*TRI*E123", "tx-1", ["DC", "DC_BPT"])]
+    assert state.notified_transaction_id == "tx-1"
+
+    # A new session is notified again
+    active[0] = SessionData(session_id="session-1", transaction_id="tx-2")
+    await poll_allowed_energy_transfer(state, None, NOW)  # ty: ignore[invalid-argument-type]
+    assert [n[1] for n in client.notifications] == ["tx-1", "tx-2"]
+
+
+async def test_poll_allowed_energy_transfer_retries_after_failure(monkeypatch: pytest.MonkeyPatch):
+    async def fetch_active_session(client):
+        return SessionData(session_id="session-1", transaction_id="tx-1")
+
+    async def failing_notify(target, transaction_id, allowed_energy_transfer):
+        raise TrocaApiError(504, "POST", "/NotifyAllowedEnergyTransfer", "Gateway Time-out")
+
+    monkeypatch.setattr(poll, "fetch_active_session", fetch_active_session)
+    client = EnergyTransferFakeTrocaClient([connector("qocppConnector2.1")], [station("FR*TRI*E123")])
+    state = client_state(client)
+
+    monkeypatch.setattr(client, "notify_allowed_energy_transfer", failing_notify)
+    with pytest.raises(TrocaApiError):
+        await poll_allowed_energy_transfer(state, None, NOW)  # ty: ignore[invalid-argument-type]
+    assert state.notified_transaction_id is None
+
+    monkeypatch.undo()
+    monkeypatch.setattr(poll, "fetch_active_session", fetch_active_session)
+    await poll_allowed_energy_transfer(state, None, NOW)  # ty: ignore[invalid-argument-type]
+    assert client.notifications == [("FR*TRI*E123", "tx-1", ["DC", "DC_BPT"])]

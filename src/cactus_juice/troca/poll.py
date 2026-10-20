@@ -28,7 +28,7 @@ from cactus_juice.troca.models import (
 from cactus_juice.troca.ocpp_metering import configure_metering
 from cactus_juice.troca.ocpp_prices import PushedPrices, sync_ocpp_prices
 from cactus_juice.troca.ocpp_schedule import PushedProfile, sync_ocpp_schedule
-from cactus_juice.troca.session_schedule import sync_session_schedule
+from cactus_juice.troca.session_schedule import fetch_active_session, sync_session_schedule
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,9 @@ DEFAULT_SCHEDULE_SYNC_MODE = ScheduleSyncMode.OCPP
 # GetBaseReport request (see poll_metadata) - the requestId only matters for correlating the station's report
 BASE_REPORT_REQUEST_ID = 4101
 BASE_REPORT_TYPE = "FullInventory"
+
+# The energy transfer modes notified to the station at the start of each session (see poll_allowed_energy_transfer)
+ALLOWED_ENERGY_TRANSFER = ["DC", "DC_BPT"]
 
 
 @dataclass(slots=True)
@@ -68,6 +71,7 @@ class ClientState:
     pushed_prices: PushedPrices | None = None  # The dynamic prices last pushed to the station
     metering_configured_station: str | None = None  # The station whose sampled meter values were last configured
     base_report_requested_station: str | None = None  # The station last asked to resend its device model report
+    notified_transaction_id: str | None = None  # The transaction last sent a NotifyAllowedEnergyTransfer
 
     # Configured values that would otherwise be discovered via the Troca API (None = discover on each poll)
     ocpp_connector_name: str | None = None
@@ -220,6 +224,29 @@ async def request_base_report(client: TrocaClient, target: OcppTarget) -> None:
         logger.warning(f"Station {target.station_name} didn't accept GetBaseReport: {exc}")
 
 
+async def poll_allowed_energy_transfer(state: ClientState, session: AsyncSession, now: datetime) -> None:
+    """Sends a NotifyAllowedEnergyTransfer (of ALLOWED_ENERGY_TRANSFER) to the station once at the start of each
+    session - ie whenever the active session's transaction differs from the one last notified."""
+
+    active_session = await fetch_active_session(state.client)
+    if active_session is None or active_session.transaction_id is None:
+        return
+    transaction_id = active_session.transaction_id
+    if transaction_id == state.notified_transaction_id:
+        return
+
+    target = await resolve_ocpp_target(state)
+    if target is None:
+        return
+
+    status = await state.client.notify_allowed_energy_transfer(target, transaction_id, ALLOWED_ENERGY_TRANSFER)
+    logger.info(
+        f"Notified station {target.station_name} of allowed energy transfer {ALLOWED_ENERGY_TRANSFER} for"
+        f" transaction {transaction_id}: {status}"
+    )
+    state.notified_transaction_id = transaction_id
+
+
 async def poll_schedules(state: ClientState, session: AsyncSession, now: datetime) -> None:
     """Keeps the charging station's schedule in sync with the full upcoming schedule of CSIP-Aus controls, via
     whichever mechanism state.schedule_sync_mode selects."""
@@ -292,6 +319,8 @@ async def run_polls(state: ClientState, min_wait: timedelta = timedelta(seconds=
         state.metadata_poll.last_poll = now
 
     if poll_required(state.schedule_poll, now):
+        # Shares the schedule's poll rate - and goes first so a new session is notified before it's scheduled
+        await _run_poll(state, "Failed notifying the allowed energy transfer", poll_allowed_energy_transfer, now)
         await _run_poll(state, "Failed polling/pushing the Troca charging schedule", poll_schedules, now)
 
         # Prices share the schedule's poll rate - but a failure in one doesn't prevent the other
