@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -221,16 +221,22 @@ class TelemetrySnapshotResponse(BaseModel):
 
 
 @router.get("/snapshot", response_model=TelemetrySnapshotResponse)
-async def get_telemetry_snapshot(session: AsyncSession = Depends(get_session)) -> TelemetrySnapshotResponse:
+async def get_telemetry_snapshot(
+    offset_seconds: int = Query(default=0),
+    session: AsyncSession = Depends(get_session),
+) -> TelemetrySnapshotResponse:
     """Fetches a single point-in-time snapshot of everything the telemetry chart needs to render: the resolved
     DERControl/Default schedule, active dynamic prices and OCPP/Satec readings/metadata across a window running
     from WINDOW_LOOKBACK_SECONDS in the past through to WINDOW_DURATION_SECONDS after that.
 
     The schedule is resolved from window_start (not now) so the chart shows a glimpse of what was actually in
     effect over the last WINDOW_LOOKBACK_SECONDS, not just what's upcoming. ramped_limits is the same schedule's
-    import/export limits stepped the way the Troca client ramps them (per the current TrocaConfig)."""
+    import/export limits stepped the way the Troca client ramps them (per the current TrocaConfig).
+
+    offset_seconds shifts the whole window forwards (positive) or backwards (negative) in time relative to now -
+    allowing the chart to scan through historical traces. now (and task_health) always reflect the real now."""
     now = datetime.now(UTC)
-    window_start = now - timedelta(seconds=WINDOW_LOOKBACK_SECONDS)
+    window_start = now + timedelta(seconds=offset_seconds - WINDOW_LOOKBACK_SECONDS)
     window_end = window_start + timedelta(seconds=WINDOW_DURATION_SECONDS)
 
     schedule = await calculate_schedule_values(session, window_start)

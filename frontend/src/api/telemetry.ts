@@ -274,6 +274,7 @@ function fromWire(wire: TelemetrySnapshotWire): TelemetrySnapshot {
   }
 }
 
-export async function fetchTelemetrySnapshot(): Promise<TelemetrySnapshot> {
-  return fromWire(await apiGet<TelemetrySnapshotWire>('/api/telemetry/snapshot'))
+/** offsetSeconds shifts the snapshot's window forwards (positive) or backwards (negative) relative to now. */
+export async function fetchTelemetrySnapshot(offsetSeconds: number = 0): Promise<TelemetrySnapshot> {
+  return fromWire(await apiGet<TelemetrySnapshotWire>(`/api/telemetry/snapshot?offset_seconds=${offsetSeconds}`))
 }

@@ -265,3 +265,29 @@ def test_get_snapshot_ramped_limits(
         (r["active_from"], r["active_to"], r["import_limit_watts"], r["export_limit_watts"])
         for r in body["ramped_limits"]
     ] == [(f"2026-01-01T{a}Z", f"2026-01-01T{b}Z", v, None) for a, b, v in expected]
+
+
+@pytest.mark.parametrize(
+    "now, offset_seconds",
+    [
+        ("2026-01-01T00:02:00Z", 0),
+        ("2026-01-01T00:32:00Z", -1800),
+        ("2025-12-31T23:52:00Z", 600),
+    ],
+)
+def test_get_snapshot_offset(seeded_client: TestClient, pg_base_config: Connection, now: str, offset_seconds: int):
+    """offset_seconds shifts the window to [00:01, 00:06) regardless of the real now - which is still reported
+    as-is in the response's now."""
+    _seed_satec_readings(pg_base_config)
+
+    with freeze_time(now):
+        response = seeded_client.get("/api/telemetry/snapshot", params={"offset_seconds": offset_seconds})
+    assert response.status_code == 200
+
+    body = response.json()
+    assert datetime.fromisoformat(body["now"]) == datetime.fromisoformat(now)
+    assert body["window_start"] == "2026-01-01T00:01:00Z"
+    assert body["window_end"] == "2026-01-01T00:06:00Z"
+    assert datetime.fromisoformat(body["schedule"][0]["active_from"]) == datetime(2026, 1, 1, 0, 1, 0, tzinfo=UTC)
+    assert [r["reading_start"] for r in body["ocpp_readings"]] == ["2026-01-01T00:05:00Z"]
+    assert len(body["satec_readings"]) == 2

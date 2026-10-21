@@ -3,6 +3,7 @@ import {
   Alert,
   Badge,
   Box,
+  Button,
   Checkbox,
   Group,
   Modal,
@@ -14,9 +15,16 @@ import {
 } from '@mantine/core'
 import { LineChart, type LineChartSeries } from '@mantine/charts'
 import { useDisclosure } from '@mantine/hooks'
-import { IconAlertCircle, IconMaximize } from '@tabler/icons-react'
+import {
+  IconAlertCircle,
+  IconChevronLeft,
+  IconChevronRight,
+  IconChevronsLeft,
+  IconChevronsRight,
+  IconMaximize,
+} from '@tabler/icons-react'
 import { useMemo, useState, type ReactNode } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 
 import { formatApiError } from '../api/http'
 import {
@@ -33,6 +41,10 @@ import { PageHeading } from '../layout/AppLayout'
 const SNAPSHOT_QUERY_KEY = ['telemetry-snapshot']
 const SHOW_RAMPS_STORAGE_KEY = 'telemetry.showRamps'
 const REFRESH_INTERVAL_MS = 10_000
+
+/** How far each of the time shift buttons moves the chart window - the large step matches the window's width. */
+const SMALL_SHIFT_SECONDS = 60
+const LARGE_SHIFT_SECONDS = 300
 
 /** A task whose last run is older than this (or that has never run at all) is considered stale, even if it
  * hasn't reported an error - it may simply have stopped ticking. */
@@ -406,6 +418,53 @@ function TimeSeriesPanel({
   )
 }
 
+/** Renders an offset from now like "-1h 5m" / "+30s" / "Live". */
+function formatOffset(offsetSeconds: number): string {
+  if (offsetSeconds === 0) return 'Live'
+  const abs = Math.abs(offsetSeconds)
+  const parts = [
+    [Math.floor(abs / 86400), 'd'],
+    [Math.floor((abs % 86400) / 3600), 'h'],
+    [Math.floor((abs % 3600) / 60), 'm'],
+    [abs % 60, 's'],
+  ]
+    .filter(([n]) => n !== 0)
+    .map(([n, unit]) => `${n}${unit}`)
+  return `${offsetSeconds < 0 ? '-' : '+'}${parts.join(' ')}`
+}
+
+interface TimeShiftControlsProps {
+  offsetSeconds: number
+  onChange: (offsetSeconds: number) => void
+}
+
+/** Shifts every chart's window backwards/forwards through time relative to now - the shift is relative, so the
+ * window keeps rolling forward with each refresh. */
+function TimeShiftControls({ offsetSeconds, onChange }: TimeShiftControlsProps) {
+  const shiftButton = (deltaSeconds: number, label: string, icon: ReactNode) => (
+    <Tooltip label={label} withArrow>
+      <ActionIcon variant="default" onClick={() => onChange(offsetSeconds + deltaSeconds)} aria-label={label}>
+        {icon}
+      </ActionIcon>
+    </Tooltip>
+  )
+
+  return (
+    <Group gap="xs" wrap="nowrap">
+      {shiftButton(-LARGE_SHIFT_SECONDS, 'Back 5 minutes', <IconChevronsLeft size={16} />)}
+      {shiftButton(-SMALL_SHIFT_SECONDS, 'Back 1 minute', <IconChevronLeft size={16} />)}
+      <Badge variant="light" color={offsetSeconds === 0 ? 'green' : 'blue'} w={110}>
+        {formatOffset(offsetSeconds)}
+      </Badge>
+      {shiftButton(SMALL_SHIFT_SECONDS, 'Forward 1 minute', <IconChevronRight size={16} />)}
+      {shiftButton(LARGE_SHIFT_SECONDS, 'Forward 5 minutes', <IconChevronsRight size={16} />)}
+      <Button variant="default" size="xs" disabled={offsetSeconds === 0} onClick={() => onChange(0)}>
+        Reset to now
+      </Button>
+    </Group>
+  )
+}
+
 function MetadataRow({ label, value }: { label: string; value: string }) {
   return (
     <Group justify="space-between" gap="xs">
@@ -424,10 +483,13 @@ function formatNumber(value: number | null, suffix: string): string {
 }
 
 export function TelemetryPage() {
+  const [offsetSeconds, setOffsetSeconds] = useState(0)
   const { data: snapshot, isLoading, isError, error } = useQuery({
-    queryKey: SNAPSHOT_QUERY_KEY,
-    queryFn: fetchTelemetrySnapshot,
+    queryKey: [...SNAPSHOT_QUERY_KEY, offsetSeconds],
+    queryFn: () => fetchTelemetrySnapshot(offsetSeconds),
     refetchInterval: REFRESH_INTERVAL_MS,
+    // Keep showing the previous window while a shifted one loads, rather than blanking every chart
+    placeholderData: keepPreviousData,
   })
 
   const [showRamps, setShowRamps] = useState(loadShowRamps)
@@ -601,6 +663,15 @@ export function TelemetryPage() {
           )}
         </Paper>
       </SimpleGrid>
+
+      <Group justify="space-between" gap="xs">
+        <Text fw={600} size="sm">
+          {chartData
+            ? `${new Date(chartData.windowStartMs).toLocaleString()} – ${formatClockTime(chartData.windowEndMs)}`
+            : null}
+        </Text>
+        <TimeShiftControls offsetSeconds={offsetSeconds} onChange={setOffsetSeconds} />
+      </Group>
 
       {chartData ? (
         <SimpleGrid cols={{ base: 1, lg: 2 }}>
