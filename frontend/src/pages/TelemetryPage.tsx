@@ -1,6 +1,20 @@
-import { Alert, Badge, Box, Checkbox, Group, Paper, SimpleGrid, Stack, Text, Tooltip } from '@mantine/core'
+import {
+  ActionIcon,
+  Alert,
+  Badge,
+  Box,
+  Checkbox,
+  Group,
+  Modal,
+  Paper,
+  SimpleGrid,
+  Stack,
+  Text,
+  Tooltip,
+} from '@mantine/core'
 import { LineChart, type LineChartSeries } from '@mantine/charts'
-import { IconAlertCircle } from '@tabler/icons-react'
+import { useDisclosure } from '@mantine/hooks'
+import { IconAlertCircle, IconMaximize } from '@tabler/icons-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
@@ -309,6 +323,9 @@ interface TimeSeriesPanelProps {
   headerRight?: ReactNode
 }
 
+/** Chart height when a panel is maximised - the full viewport less room for the modal's header and padding. */
+const MAXIMISED_CHART_HEIGHT = 'calc(100dvh - 120px)'
+
 function TimeSeriesPanel({
   title,
   unit,
@@ -322,43 +339,69 @@ function TimeSeriesPanel({
   markers = [],
   headerRight,
 }: TimeSeriesPanelProps) {
+  const [maximised, { open: maximise, close: restore }] = useDisclosure(false)
+
+  const renderChart = (h: number | string) => (
+    <LineChart
+      h={h}
+      data={data}
+      dataKey="time"
+      series={series}
+      curveType="stepAfter"
+      withLegend
+      withDots={false}
+      strokeWidth={2}
+      unit={unit}
+      connectNulls={false}
+      xAxisProps={{
+        type: 'number',
+        domain: [windowStartMs, windowEndMs],
+        tickFormatter: formatClockTime,
+      }}
+      yAxisProps={yAxisDomain ? { domain: yAxisDomain } : undefined}
+      tooltipProps={{ labelFormatter: (label) => formatClockTime(Number(label)) }}
+      referenceLines={[
+        { x: nowMs, color: 'red.6', label: 'Now', labelPosition: 'insideTopLeft' },
+        ...extraReferenceLines.map((rl) => ({
+          y: rl.y,
+          color: 'gray.5',
+          strokeDasharray: '4 4',
+          label: rl.label,
+        })),
+      ]}
+      referenceAreas={markers.map((m) => ({ x1: m.start, x2: m.end, color: 'red.6', label: m.label }))}
+    />
+  )
+
   return (
     <Paper withBorder p="md">
       <Group justify="space-between" gap="xs" mb="xs">
         <Text fw={600} size="sm">
           {title}
         </Text>
-        {headerRight}
+        <Group gap="xs" wrap="nowrap">
+          {headerRight}
+          <Tooltip label="Maximise" withArrow>
+            <ActionIcon variant="subtle" color="gray" size="sm" onClick={maximise} aria-label={`Maximise ${title}`}>
+              <IconMaximize size={16} />
+            </ActionIcon>
+          </Tooltip>
+        </Group>
       </Group>
-      <LineChart
-        h={220}
-        data={data}
-        dataKey="time"
-        series={series}
-        curveType="stepAfter"
-        withLegend
-        withDots={false}
-        strokeWidth={2}
-        unit={unit}
-        connectNulls={false}
-        xAxisProps={{
-          type: 'number',
-          domain: [windowStartMs, windowEndMs],
-          tickFormatter: formatClockTime,
-        }}
-        yAxisProps={yAxisDomain ? { domain: yAxisDomain } : undefined}
-        tooltipProps={{ labelFormatter: (label) => formatClockTime(Number(label)) }}
-        referenceLines={[
-          { x: nowMs, color: 'red.6', label: 'Now', labelPosition: 'insideTopLeft' },
-          ...extraReferenceLines.map((rl) => ({
-            y: rl.y,
-            color: 'gray.5',
-            strokeDasharray: '4 4',
-            label: rl.label,
-          })),
-        ]}
-        referenceAreas={markers.map((m) => ({ x1: m.start, x2: m.end, color: 'red.6', label: m.label }))}
-      />
+      {renderChart(220)}
+      <Modal
+        opened={maximised}
+        onClose={restore}
+        fullScreen
+        title={
+          <Group gap="md">
+            <Text fw={600}>{title}</Text>
+            {headerRight}
+          </Group>
+        }
+      >
+        {renderChart(MAXIMISED_CHART_HEIGHT)}
+      </Modal>
     </Paper>
   )
 }
