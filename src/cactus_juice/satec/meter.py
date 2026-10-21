@@ -555,12 +555,9 @@ ACUDC_ENERGY = (
     ],
 )
 
-# Power unit on the wire is not stated anywhere in the documentation. The
-# display shows kW at 1 W resolution, and Accuenergy's other float maps use
-# W, so W is assumed and scaled to kW to match the field names.
-# UNCONFIRMED -- check V x I against kw_ch1 if this looks out by 1000.
-ACUDC_POWER_SCALE = 0.001
-ACUDC_POWER_FIELDS = ("kw_ch1", "kw_ch2", "kw_sum", "demand_kw_ch1", "demand_kw_ch2", "demand_kw_sum")
+# Power unit on the wire is not stated anywhere in the documentation, but
+# confirmed against hardware to be kW (matching the field names) -- no
+# scaling is applied.
 
 ACUDC_REG_RT_TYPE = 0x101C  # 0 = secondary, 1 = primary
 ACUDC_REG_FIRMWARE = 0xF000  # version, release date, patch -- ASCII
@@ -620,11 +617,7 @@ class AcuDCMeter(ModbusMeter):
     def _read_block(self, block: tuple, width: int) -> dict:
         start, fields = block
         values = self._floats(self._read(start, len(fields) * width), width)
-        out = dict(zip(fields, values, strict=True))
-        for name in ACUDC_POWER_FIELDS:
-            if name in out:
-                out[name] *= ACUDC_POWER_SCALE
-        return out
+        return dict(zip(fields, values, strict=True))
 
     # -- identification ----------------------------------------------------
 

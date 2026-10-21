@@ -87,9 +87,9 @@ def test_acudc_identify_reads_serial_either_byte_order(swapped_serial: bool):
     assert info.firmware == "unknown"
 
 
-def test_acudc_sample_decodes_high_word_first_and_scales_power():
+def test_acudc_sample_decodes_high_word_first_and_reports_power_unscaled():
     registers = make_acudc_registers()
-    load_block(registers, ACUDC_REALTIME, {"v_source": 119.98, "i_ch1": 10.5, "kw_ch1": 1259.79, "kw_sum": 1259.79}, 2)
+    load_block(registers, ACUDC_REALTIME, {"v_source": 119.98, "i_ch1": 10.5, "kw_ch1": 1.25979, "kw_sum": 1.25979}, 2)
     load_block(registers, ACUDC_VLOAD, {"v_load_ch1": 119.5}, 2)
     load_block(registers, ACUDC_ENERGY, {"kwh_import_sum": 123456.789}, 4)
     meter = AcuDCMeter(FakeModbusClient(registers))  # ty: ignore[invalid-argument-type]
@@ -99,7 +99,7 @@ def test_acudc_sample_decodes_high_word_first_and_scales_power():
     assert reading.serial == "MDA250500001"
     assert reading.values["v_source"] == pytest.approx(119.98, rel=1e-6)
     assert reading.values["i_ch1"] == pytest.approx(10.5)
-    assert reading.values["kw_ch1"] == pytest.approx(1.25979, rel=1e-6)  # W on the wire, scaled to kW
+    assert reading.values["kw_ch1"] == pytest.approx(1.25979, rel=1e-6)  # kW on the wire, no scaling
     assert reading.values["kw_sum"] == pytest.approx(1.25979, rel=1e-6)
     assert reading.values["v_load_ch1"] == pytest.approx(119.5)
     assert reading.values["kwh_import_sum"] == 123456.789
