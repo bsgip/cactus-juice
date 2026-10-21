@@ -206,14 +206,33 @@ function scheduleToMarkers(schedule: ScheduledValues[], windowStartMs: number, w
   return markers
 }
 
-/** OCPP readings are instantaneous samples - each one's value is treated as holding until the next sample
- * arrives (or the end of the window, for the most recent one). */
-function readingsToIntervals(readings: OcppReading[], field: keyof OcppReading, windowEndMs: number): Interval[] {
-  return readings.map((r, i) => ({
-    start: new Date(r.readingStart).getTime(),
-    end: i + 1 < readings.length ? new Date(readings[i + 1].readingStart).getTime() : windowEndMs,
-    value: r[field] as number | null,
-  }))
+/** A gap between consecutive samples larger than this multiple of the series' typical (median) sample spacing is
+ * treated as missing readings and left blank on the chart, rather than holding the previous value across it. */
+const MISSING_READING_GAP_FACTOR = 2
+
+function medianSpacingMs(starts: number[]): number | null {
+  if (starts.length < 2) return null
+  const gaps = starts.slice(1).map((t, i) => t - starts[i]).sort((a, b) => a - b)
+  return gaps[Math.floor(gaps.length / 2)]
+}
+
+/** Readings are instantaneous samples - each one's value is treated as holding until the next sample arrives,
+ * but for no longer than MISSING_READING_GAP_FACTOR x the typical sample spacing (so missing readings show as a
+ * blank) and never beyond now (so the most recent sample doesn't roll forward into the future). */
+function samplesToIntervals(samples: { start: number; value: number | null }[], nowMs: number): Interval[] {
+  const spacing = medianSpacingMs(samples.map((s) => s.start))
+  const maxHoldMs = spacing === null ? Infinity : spacing * MISSING_READING_GAP_FACTOR
+  return samples.map((s, i) => {
+    const next = i + 1 < samples.length ? samples[i + 1].start : nowMs
+    return { start: s.start, end: Math.min(next, s.start + maxHoldMs), value: s.value }
+  })
+}
+
+function readingsToIntervals(readings: OcppReading[], field: keyof OcppReading, nowMs: number): Interval[] {
+  return samplesToIntervals(
+    readings.map((r) => ({ start: new Date(r.readingStart).getTime(), value: r[field] as number | null })),
+    nowMs,
+  )
 }
 
 /** Groups SatecReadings by their parent SatecConfig label (each meter reports independently, so readings from
@@ -231,23 +250,21 @@ function groupSatecReadingsByLabel(readings: SatecReading[]): Map<string, SatecR
   return groups
 }
 
-/** Same "hold until the next sample" semantics as readingsToIntervals, for a single meter's readings - scale
- * converts the SatecReading's native units (kW/kVAr) up to the W/VAr used by the OCPP-sourced series it's
- * plotted alongside. */
+/** Same sample semantics as readingsToIntervals, for a single meter's readings - scale converts the
+ * SatecReading's native units (kW/kVAr) up to the W/VAr used by the OCPP-sourced series it's plotted alongside. */
 function satecReadingsToIntervals(
   readings: SatecReading[],
   field: keyof Omit<SatecReading, 'label' | 'readingStart'>,
-  windowEndMs: number,
+  nowMs: number,
   scale: number,
 ): Interval[] {
-  return readings.map((r, i) => {
-    const value = r[field]
-    return {
-      start: new Date(r.readingStart).getTime(),
-      end: i + 1 < readings.length ? new Date(readings[i + 1].readingStart).getTime() : windowEndMs,
-      value: value === null ? null : value * scale,
-    }
-  })
+  return samplesToIntervals(
+    readings.map((r) => {
+      const value = r[field]
+      return { start: new Date(r.readingStart).getTime(), value: value === null ? null : value * scale }
+    }),
+    nowMs,
+  )
 }
 
 /** Dynamic prices can overlap (multiple tariff primacies active at once) - at each moment, the row with the
@@ -397,10 +414,10 @@ export function TelemetryPage() {
     for (const label of satecLabels) {
       const readings = satecByLabel.get(label)!
       const key = satecSeriesKey(label)
-      satecPowerIntervals[key] = satecReadingsToIntervals(readings, 'totalKw', windowEndMs, 1000)
-      satecReactivePowerIntervals[key] = satecReadingsToIntervals(readings, 'totalKvar', windowEndMs, 1000)
-      satecFrequencyIntervals[key] = satecReadingsToIntervals(readings, 'frequency', windowEndMs, 1)
-      satecVoltageIntervals[key] = satecReadingsToIntervals(readings, 'vAvgLn', windowEndMs, 1)
+      satecPowerIntervals[key] = satecReadingsToIntervals(readings, 'totalKw', nowMs, 1000)
+      satecReactivePowerIntervals[key] = satecReadingsToIntervals(readings, 'totalKvar', nowMs, 1000)
+      satecFrequencyIntervals[key] = satecReadingsToIntervals(readings, 'frequency', nowMs, 1)
+      satecVoltageIntervals[key] = satecReadingsToIntervals(readings, 'vAvgLn', nowMs, 1)
     }
 
     const power = buildStepRows(
@@ -414,8 +431,8 @@ export function TelemetryPage() {
         loadLimitWatts: scheduleToIntervals(snapshot.schedule, 'loadLimitWatts'),
         generationLimitWatts: scheduleToIntervals(snapshot.schedule, 'generationLimitWatts'),
         storageTargetWatts: scheduleToIntervals(snapshot.schedule, 'storageTargetWatts'),
-        importActivePowerWatts: readingsToIntervals(snapshot.ocppReadings, 'importActivePowerWatts', windowEndMs),
-        exportActivePowerWatts: readingsToIntervals(snapshot.ocppReadings, 'exportActivePowerWatts', windowEndMs),
+        importActivePowerWatts: readingsToIntervals(snapshot.ocppReadings, 'importActivePowerWatts', nowMs),
+        exportActivePowerWatts: readingsToIntervals(snapshot.ocppReadings, 'exportActivePowerWatts', nowMs),
         ...satecPowerIntervals,
       },
       windowStartMs,
@@ -424,8 +441,8 @@ export function TelemetryPage() {
 
     const reactivePower = buildStepRows(
       {
-        importReactivePowerVar: readingsToIntervals(snapshot.ocppReadings, 'importReactivePowerVar', windowEndMs),
-        exportReactivePowerVar: readingsToIntervals(snapshot.ocppReadings, 'exportReactivePowerVar', windowEndMs),
+        importReactivePowerVar: readingsToIntervals(snapshot.ocppReadings, 'importReactivePowerVar', nowMs),
+        exportReactivePowerVar: readingsToIntervals(snapshot.ocppReadings, 'exportReactivePowerVar', nowMs),
         ...satecReactivePowerIntervals,
       },
       windowStartMs,
@@ -440,7 +457,7 @@ export function TelemetryPage() {
 
     const frequency = buildStepRows(
       {
-        frequencyHz: readingsToIntervals(snapshot.ocppReadings, 'frequencyHz', windowEndMs),
+        frequencyHz: readingsToIntervals(snapshot.ocppReadings, 'frequencyHz', nowMs),
         ...satecFrequencyIntervals,
       },
       windowStartMs,
@@ -449,7 +466,7 @@ export function TelemetryPage() {
 
     const voltage = buildStepRows(
       {
-        voltageVolts: readingsToIntervals(snapshot.ocppReadings, 'voltageVolts', windowEndMs),
+        voltageVolts: readingsToIntervals(snapshot.ocppReadings, 'voltageVolts', nowMs),
         ...satecVoltageIntervals,
       },
       windowStartMs,
@@ -457,7 +474,7 @@ export function TelemetryPage() {
     )
 
     const soc = buildStepRows(
-      { socPercent: readingsToIntervals(snapshot.ocppReadings, 'socPercent', windowEndMs) },
+      { socPercent: readingsToIntervals(snapshot.ocppReadings, 'socPercent', nowMs) },
       windowStartMs,
       windowEndMs,
     )
