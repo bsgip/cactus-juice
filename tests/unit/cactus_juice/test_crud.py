@@ -1931,6 +1931,30 @@ async def test_delete_satec_config(pg_base_config):
     assert [r.satec_config_id for r in rows] == [1, 3]
 
 
+async def test_delete_satec_config_with_readings(pg_base_config):
+    """Readings FK to their SatecConfig - they must be removed alongside it, leaving other meters' readings alone."""
+    async with generate_async_session(pg_base_config) as session:
+        await insert_satec_readings(
+            session,
+            [
+                generate_class_instance(SatecReading, seed=1, satec_config_id=2),
+                generate_class_instance(SatecReading, seed=2, satec_config_id=2),
+                generate_class_instance(SatecReading, seed=3, satec_config_id=1),
+            ],
+        )
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        assert await delete_satec_config(session, 2) is True
+        await session.commit()
+
+    async with generate_async_session(pg_base_config) as session:
+        assert await fetch_satec_config(session, 2) is None
+        readings = (await session.execute(select(SatecReading))).scalars().all()
+
+    assert [r.satec_config_id for r in readings] == [1]
+
+
 async def test_delete_satec_config_missing(pg_base_config):
     async with generate_async_session(pg_base_config) as session:
         count_before = (await session.execute(select(func.count()).select_from(SatecConfig))).scalar_one()

@@ -663,7 +663,8 @@ async def update_satec_config(session: AsyncSession, satec_config_id: int, value
 
 
 async def delete_satec_config(session: AsyncSession, satec_config_id: int) -> bool:
-    """Deletes a SatecConfig row by id - returns True if a row was deleted, False if none existed.
+    """Deletes a SatecConfig row by id (and every SatecReading linked to it) - returns True if a row was deleted,
+    False if none existed.
 
     does NOT commit any transaction."""
 
@@ -671,6 +672,7 @@ async def delete_satec_config(session: AsyncSession, satec_config_id: int) -> bo
     if entry is None:
         return False
 
+    await session.execute(delete(SatecReading).where(SatecReading.satec_config_id == satec_config_id))
     await session.delete(entry)
     await session.flush()
     return True
