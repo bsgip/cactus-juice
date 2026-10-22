@@ -340,6 +340,18 @@ interface TimeSeriesPanelProps {
 /** Chart height when a panel is maximised - the full viewport less room for the modal's header and padding. */
 const MAXIMISED_CHART_HEIGHT = 'calc(100dvh - 120px)'
 
+/** Line widths / font sizes for a chart - the maximised view scales these up so it stays legible on a large monitor.
+ * fontSize (px) applies to the SVG text (axis ticks, reference labels), textSize to the HTML legend/tooltip. */
+interface ChartScale {
+  strokeWidth: number
+  fontSize: number
+  textSize: string
+  yAxisWidth: number
+}
+
+const NORMAL_CHART_SCALE: ChartScale = { strokeWidth: 2, fontSize: 12, textSize: 'sm', yAxisWidth: 60 }
+const MAXIMISED_CHART_SCALE: ChartScale = { strokeWidth: 4, fontSize: 20, textSize: 'xl', yAxisWidth: 110 }
+
 function TimeSeriesPanel({
   title,
   unit,
@@ -356,37 +368,59 @@ function TimeSeriesPanel({
 }: TimeSeriesPanelProps) {
   const [maximised, { open: maximise, close: restore }] = useDisclosure(false)
 
-  const renderChart = (h: number | string) => (
-    <LineChart
-      h={h}
-      data={data}
-      dataKey="time"
-      series={series}
-      curveType="stepAfter"
-      withLegend
-      withDots={false}
-      strokeWidth={2}
-      unit={unit}
-      connectNulls={false}
-      xAxisProps={{
-        type: 'number',
-        domain: [windowStartMs, windowEndMs],
-        tickFormatter: formatClockTime,
-      }}
-      yAxisProps={yAxisDomain ? { domain: yAxisDomain } : undefined}
-      tooltipProps={{ labelFormatter: (label) => formatClockTime(Number(label)) }}
-      referenceLines={[
-        { x: nowMs, color: 'red.6', label: 'Now', labelPosition: 'insideTopLeft' },
-        ...extraReferenceLines.map((rl) => ({
-          y: rl.y,
-          color: 'gray.5',
-          strokeDasharray: '4 4',
-          label: rl.label,
-        })),
-      ]}
-      referenceAreas={markers.map((m) => ({ x1: m.start, x2: m.end, color: 'red.6', label: m.label }))}
-    />
-  )
+  const renderChart = (h: number | string, scale: ChartScale) => {
+    const { fontSize } = scale
+    const text = { fontSize: `var(--mantine-font-size-${scale.textSize})` }
+    return (
+      <LineChart
+        h={h}
+        data={data}
+        dataKey="time"
+        series={series}
+        curveType="stepAfter"
+        withLegend
+        withDots={false}
+        strokeWidth={scale.strokeWidth}
+        unit={unit}
+        connectNulls={false}
+        styles={{
+          legendItemName: text,
+          tooltipLabel: text,
+          tooltipItemName: text,
+          tooltipItemData: text,
+        }}
+        // Mantine hard codes the tick font size, so the tick props need re-declaring in full to override it
+        xAxisProps={{
+          type: 'number',
+          domain: [windowStartMs, windowEndMs],
+          tickFormatter: formatClockTime,
+          tick: { transform: `translate(0, ${fontSize - 2})`, fontSize, fill: 'currentColor' },
+          height: fontSize * 2 + 6,
+        }}
+        yAxisProps={{
+          ...(yAxisDomain ? { domain: yAxisDomain } : {}),
+          tick: { transform: 'translate(-10, 0)', fontSize, fill: 'currentColor' },
+          width: scale.yAxisWidth,
+        }}
+        tooltipProps={{ labelFormatter: (label) => formatClockTime(Number(label)) }}
+        referenceLines={[
+          { x: nowMs, color: 'red.6', label: { value: 'Now', fontSize }, labelPosition: 'insideTopLeft' },
+          ...extraReferenceLines.map((rl) => ({
+            y: rl.y,
+            color: 'gray.5',
+            strokeDasharray: '4 4',
+            label: { value: rl.label, fontSize },
+          })),
+        ]}
+        referenceAreas={markers.map((m) => ({
+          x1: m.start,
+          x2: m.end,
+          color: 'red.6',
+          label: { value: m.label, fontSize },
+        }))}
+      />
+    )
+  }
 
   return (
     <Paper withBorder p="md">
@@ -403,7 +437,7 @@ function TimeSeriesPanel({
           </Tooltip>
         </Group>
       </Group>
-      {renderChart(220)}
+      {renderChart(220, NORMAL_CHART_SCALE)}
       <Modal
         opened={maximised}
         onClose={restore}
@@ -416,7 +450,7 @@ function TimeSeriesPanel({
           </Group>
         }
       >
-        {renderChart(MAXIMISED_CHART_HEIGHT)}
+        {renderChart(MAXIMISED_CHART_HEIGHT, MAXIMISED_CHART_SCALE)}
       </Modal>
     </Paper>
   )
