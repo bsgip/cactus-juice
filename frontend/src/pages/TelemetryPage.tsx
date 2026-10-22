@@ -333,6 +333,8 @@ interface TimeSeriesPanelProps {
   extraReferenceLines?: { y: number; label: string }[]
   markers?: ScheduleMarker[]
   headerRight?: ReactNode
+  /** Extra controls shown only in the maximised (full screen) view's header. */
+  maximisedHeader?: ReactNode
 }
 
 /** Chart height when a panel is maximised - the full viewport less room for the modal's header and padding. */
@@ -350,6 +352,7 @@ function TimeSeriesPanel({
   extraReferenceLines = [],
   markers = [],
   headerRight,
+  maximisedHeader,
 }: TimeSeriesPanelProps) {
   const [maximised, { open: maximise, close: restore }] = useDisclosure(false)
 
@@ -409,6 +412,7 @@ function TimeSeriesPanel({
           <Group gap="md">
             <Text fw={600}>{title}</Text>
             {headerRight}
+            {maximisedHeader}
           </Group>
         }
       >
@@ -599,6 +603,8 @@ export function TelemetryPage() {
     [chartData],
   )
 
+  const timeShiftControls = <TimeShiftControls offsetSeconds={offsetSeconds} onChange={setOffsetSeconds} />
+
   return (
     <Stack gap="lg">
       <PageHeading
@@ -670,12 +676,13 @@ export function TelemetryPage() {
             ? `${new Date(chartData.windowStartMs).toLocaleString()} – ${formatClockTime(chartData.windowEndMs)}`
             : null}
         </Text>
-        <TimeShiftControls offsetSeconds={offsetSeconds} onChange={setOffsetSeconds} />
+        {timeShiftControls}
       </Group>
 
       {chartData ? (
         <SimpleGrid cols={{ base: 1, lg: 2 }}>
           <TimeSeriesPanel
+            maximisedHeader={timeShiftControls}
             title="Power"
             unit=" W"
             data={chartData.power}
@@ -721,6 +728,7 @@ export function TelemetryPage() {
           />
 
           <TimeSeriesPanel
+            maximisedHeader={timeShiftControls}
             title="Reactive power"
             unit=" VAr"
             data={chartData.reactivePower}
@@ -735,6 +743,7 @@ export function TelemetryPage() {
           />
 
           <TimeSeriesPanel
+            maximisedHeader={timeShiftControls}
             title="Dynamic price"
             unit=" $/kWh"
             data={chartData.price}
@@ -745,6 +754,7 @@ export function TelemetryPage() {
           />
 
           <TimeSeriesPanel
+            maximisedHeader={timeShiftControls}
             title="Frequency"
             unit=" Hz"
             data={chartData.frequency}
@@ -755,6 +765,7 @@ export function TelemetryPage() {
           />
 
           <TimeSeriesPanel
+            maximisedHeader={timeShiftControls}
             title="Voltage"
             unit=" V"
             data={chartData.voltage}
@@ -773,6 +784,7 @@ export function TelemetryPage() {
           />
 
           <TimeSeriesPanel
+            maximisedHeader={timeShiftControls}
             title="State of charge"
             unit="%"
             data={chartData.soc}
