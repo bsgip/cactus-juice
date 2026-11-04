@@ -5,6 +5,8 @@ import {
   Box,
   Button,
   Checkbox,
+  ColorSwatch,
+  getThemeColor,
   Group,
   Modal,
   Paper,
@@ -14,8 +16,10 @@ import {
   Text,
   TextInput,
   Tooltip,
+  UnstyledButton,
+  useMantineTheme,
 } from '@mantine/core'
-import { LineChart, type LineChartSeries } from '@mantine/charts'
+import { ChartLegend, LineChart, type LineChartSeries } from '@mantine/charts'
 import { useDisclosure } from '@mantine/hooks'
 import {
   IconAlertCircle,
@@ -355,6 +359,56 @@ interface ChartScale {
 const NORMAL_CHART_SCALE: ChartScale = { strokeWidth: 2, fontSize: 12, textSize: 'sm', yAxisWidth: 60 }
 const MAXIMISED_CHART_SCALE: ChartScale = { strokeWidth: 4, fontSize: 20, textSize: 'xl', yAxisWidth: 110 }
 
+interface ToggleableLegendProps {
+  series: LineChartSeries[]
+  hiddenSeries: ReadonlySet<string>
+  textSize: string
+  onToggle: (name: string) => void
+  onHighlight: (name: string | null) => void
+}
+
+/** Mantine's ChartLegend offers no per item click handling, so this rebuilds it (reusing its classes) with each item
+ * toggling the visibility of its series. Hidden series stay listed - dimmed and struck through - so they can be
+ * brought back. */
+function ToggleableLegend({ series, hiddenSeries, textSize, onToggle, onHighlight }: ToggleableLegendProps) {
+  const theme = useMantineTheme()
+  const { classes } = ChartLegend
+
+  return (
+    <div className={classes.legend} data-position="top" onMouseLeave={() => onHighlight(null)}>
+      {series.map(({ name, label, color }) => {
+        const hidden = hiddenSeries.has(name)
+        return (
+          <UnstyledButton
+            key={name}
+            className={classes.legendItem}
+            aria-pressed={!hidden}
+            style={{ opacity: hidden ? 0.4 : 1 }}
+            onClick={() => onToggle(name)}
+            onMouseEnter={() => onHighlight(hidden ? null : name)}
+          >
+            <ColorSwatch
+              className={classes.legendItemColor}
+              color={getThemeColor(color, theme)}
+              size={12}
+              withShadow={false}
+            />
+            <span
+              className={classes.legendItemName}
+              style={{
+                fontSize: `var(--mantine-font-size-${textSize})`,
+                textDecoration: hidden ? 'line-through' : undefined,
+              }}
+            >
+              {label ?? name}
+            </span>
+          </UnstyledButton>
+        )
+      })}
+    </div>
+  )
+}
+
 function TimeSeriesPanel({
   title,
   unit,
@@ -370,6 +424,18 @@ function TimeSeriesPanel({
   maximisedHeader,
 }: TimeSeriesPanelProps) {
   const [maximised, { open: maximise, close: restore }] = useDisclosure(false)
+  // Lives here rather than in the chart so that the normal and maximised views stay in sync
+  const [hiddenSeries, setHiddenSeries] = useState<ReadonlySet<string>>(new Set())
+  const [highlightedSeries, setHighlightedSeries] = useState<string | null>(null)
+
+  const toggleSeries = (name: string) => {
+    setHiddenSeries((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(name)) next.add(name)
+      return next
+    })
+    setHighlightedSeries(null)
+  }
 
   const renderChart = (h: number | string, scale: ChartScale) => {
     const { fontSize } = scale
@@ -382,12 +448,27 @@ function TimeSeriesPanel({
         series={series}
         curveType="stepAfter"
         withLegend
+        legendProps={{
+          content: () => (
+            <ToggleableLegend
+              series={series}
+              hiddenSeries={hiddenSeries}
+              textSize={scale.textSize}
+              onToggle={toggleSeries}
+              onHighlight={setHighlightedSeries}
+            />
+          ),
+        }}
+        lineProps={({ name }) => ({
+          hide: hiddenSeries.has(name),
+          // Replaces the hover highlighting that came with Mantine's own legend
+          ...(highlightedSeries !== null && highlightedSeries !== name ? { strokeOpacity: 0.5 } : {}),
+        })}
         withDots={false}
         strokeWidth={scale.strokeWidth}
         unit={unit}
         connectNulls={false}
         styles={{
-          legendItemName: text,
           tooltipLabel: text,
           tooltipItemName: text,
           tooltipItemData: text,
