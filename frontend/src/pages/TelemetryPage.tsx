@@ -8,22 +8,25 @@ import {
   Group,
   Modal,
   Paper,
+  Popover,
   SimpleGrid,
   Stack,
   Text,
+  TextInput,
   Tooltip,
 } from '@mantine/core'
 import { LineChart, type LineChartSeries } from '@mantine/charts'
 import { useDisclosure } from '@mantine/hooks'
 import {
   IconAlertCircle,
+  IconCalendarEvent,
   IconChevronLeft,
   IconChevronRight,
   IconChevronsLeft,
   IconChevronsRight,
   IconMaximize,
 } from '@tabler/icons-react'
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 
 import { formatApiError } from '../api/http'
@@ -471,6 +474,72 @@ function formatOffset(offsetSeconds: number): string {
   return `${offsetSeconds < 0 ? '-' : '+'}${parts.join(' ')}`
 }
 
+/** Formats ms as the browser-local "YYYY-MM-DDTHH:mm:ss" string a datetime-local input expects. */
+function toDateTimeLocalValue(ms: number): string {
+  const utcOffsetMs = new Date(ms).getTimezoneOffset() * 60_000
+  return new Date(ms - utcOffsetMs).toISOString().slice(0, 19)
+}
+
+/** Applied to focusable popover content - an enclosing Modal watches for Escape on the window in the capture phase
+ * so can't be stopped by the Popover, and would otherwise close along with it. */
+const KEEP_MODAL_OPEN_ON_ESCAPE = { 'data-mantine-stop-propagation': 'true' }
+
+interface JumpToTimeControlProps {
+  offsetSeconds: number
+  onChange: (offsetSeconds: number) => void
+}
+
+/** Picks an absolute (browser-local) moment and converts it to the equivalent offset from now. The moment takes the
+ * same place in the window as "Now" does when live. The pick is only applied on submit, as a datetime-local input
+ * reports a change for every keystroke - applying those would fetch a window for each partially typed date. */
+function JumpToTimeControl({ offsetSeconds, onChange }: JumpToTimeControlProps) {
+  const [opened, setOpened] = useState(false)
+  const [draft, setDraft] = useState('')
+
+  const toggle = () => {
+    if (!opened) setDraft(toDateTimeLocalValue(Date.now() + offsetSeconds * 1000))
+    setOpened(!opened)
+  }
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    const pickedMs = new Date(draft).getTime()
+    if (Number.isNaN(pickedMs)) return
+    onChange(Math.round((pickedMs - Date.now()) / 1000))
+    setOpened(false)
+  }
+
+  return (
+    <Popover opened={opened} onChange={setOpened} position="bottom" withArrow shadow="md" trapFocus>
+      <Popover.Target>
+        <Tooltip label="Jump to date and time" withArrow disabled={opened}>
+          <ActionIcon variant="default" onClick={toggle} aria-label="Jump to date and time">
+            <IconCalendarEvent size={16} />
+          </ActionIcon>
+        </Tooltip>
+      </Popover.Target>
+      <Popover.Dropdown>
+        <form onSubmit={submit}>
+          <Group gap="xs" align="flex-end" wrap="nowrap">
+            <TextInput
+              label="Jump to"
+              size="xs"
+              type="datetime-local"
+              step={1}
+              value={draft}
+              onChange={(event) => setDraft(event.currentTarget.value)}
+              {...KEEP_MODAL_OPEN_ON_ESCAPE}
+            />
+            <Button type="submit" size="xs" disabled={draft === ''} {...KEEP_MODAL_OPEN_ON_ESCAPE}>
+              Go
+            </Button>
+          </Group>
+        </form>
+      </Popover.Dropdown>
+    </Popover>
+  )
+}
+
 interface TimeShiftControlsProps {
   offsetSeconds: number
   onChange: (offsetSeconds: number) => void
@@ -491,11 +560,12 @@ function TimeShiftControls({ offsetSeconds, onChange }: TimeShiftControlsProps) 
     <Group gap="xs" wrap="nowrap">
       {shiftButton(-LARGE_SHIFT_SECONDS, 'Back 5 minutes', <IconChevronsLeft size={16} />)}
       {shiftButton(-SMALL_SHIFT_SECONDS, 'Back 1 minute', <IconChevronLeft size={16} />)}
-      <Badge variant="light" color={offsetSeconds === 0 ? 'green' : 'blue'} w={110}>
+      <Badge variant="light" color={offsetSeconds === 0 ? 'green' : 'blue'} miw={110}>
         {formatOffset(offsetSeconds)}
       </Badge>
       {shiftButton(SMALL_SHIFT_SECONDS, 'Forward 1 minute', <IconChevronRight size={16} />)}
       {shiftButton(LARGE_SHIFT_SECONDS, 'Forward 5 minutes', <IconChevronsRight size={16} />)}
+      <JumpToTimeControl offsetSeconds={offsetSeconds} onChange={onChange} />
       <Button variant="default" size="xs" disabled={offsetSeconds === 0} onClick={() => onChange(0)}>
         Reset to now
       </Button>
